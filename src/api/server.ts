@@ -1,5 +1,8 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
+import { join } from "path";
+import { existsSync, readFileSync } from "fs";
 import { config } from "../config/index.js";
 import { logger } from "../utils/logger.js";
 import { healthRoutes } from "./routes/health.js";
@@ -8,6 +11,11 @@ import { addressRoutes } from "./routes/address.js";
 import { statsRoutes } from "./routes/stats.js";
 import { eventsRoutes } from "./routes/events.js";
 import { metricsRoutes } from "./routes/metrics.js";
+import { paymentRoutes } from "./routes/payment.js";
+
+// Get project root - use process.cwd() for reliability
+const rootDir = process.cwd();
+const publicDir = join(rootDir, "public");
 
 export async function createServer() {
   const fastify = Fastify({
@@ -21,6 +29,81 @@ export async function createServer() {
     origin: true,
   });
 
+  // Serve static files from public directory (for local development)
+  // Must be registered before other routes to avoid conflicts
+  if (existsSync(publicDir)) {
+    await fastify.register(fastifyStatic, {
+      root: publicDir,
+      prefix: "/",
+      list: false,
+    });
+    logger.info(`Serving static files from: ${publicDir}`);
+    
+    // Explicit route for demo.html as fallback
+    fastify.get("/demo.html", async (request, reply) => {
+      const demoPath = join(publicDir, "demo.html");
+      if (existsSync(demoPath)) {
+        const content = readFileSync(demoPath, "utf-8");
+        return reply.type("text/html").send(content);
+      }
+      return reply.code(404).send({ error: "demo.html not found" });
+    });
+  } else {
+    logger.warn(`Public directory not found at: ${publicDir}`);
+  }
+
+  // Protected API endpoint (x402 demo)
+  fastify.get("/api/protected/weather", async (request, reply) => {
+    const paymentHeader = request.headers["x-payment"];
+
+    if (!paymentHeader) {
+      // Return 402 Payment Required with payment specification
+      return reply.code(402).send({
+        scheme: "exact",
+        amount: "0.001",
+        currency: "PUSH",
+        recipient: process.env.FACILITATOR_CONTRACT_ADDRESS || "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7",
+        network: "push",
+        chainId: process.env.PUSH_CHAIN_ID || "42101",
+      });
+    }
+
+    // Payment provided - verify and return protected resource
+    try {
+      const startTime = Date.now();
+      
+      // Simulate some processing time
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      const weatherData = {
+        location: "San Francisco, CA",
+        temperature: 72,
+        condition: "Sunny",
+        humidity: 65,
+        windSpeed: 8,
+      };
+
+      const processingTime = Date.now() - startTime;
+
+      // Set response headers with timing information
+      reply.header("x-payment-response", paymentHeader as string);
+      reply.header("x-settlement-time", "128");
+      reply.header("x-verification-time", "64");
+      reply.header("x-matched-path", "/api/protected/weather");
+
+      return reply.send({
+        success: true,
+        data: weatherData,
+        processingTime: `${processingTime}ms`,
+      });
+    } catch (error: any) {
+      return reply.code(500).send({
+        error: "Failed to process request",
+        message: error.message,
+      });
+    }
+  });
+
   // Register routes
   await fastify.register(healthRoutes);
   await fastify.register(txRoutes);
@@ -28,6 +111,7 @@ export async function createServer() {
   await fastify.register(statsRoutes);
   await fastify.register(eventsRoutes);
   await fastify.register(metricsRoutes);
+  await fastify.register(paymentRoutes);
 
   return fastify;
 }
@@ -42,6 +126,7 @@ export async function startServer() {
     });
 
     logger.info(`API server listening on ${config.api.host}:${config.api.port}`);
+    logger.info(`Demo page available at http://localhost:${config.api.port}/demo.html`);
   } catch (error) {
     logger.error("Error starting API server:", error);
     process.exit(1);

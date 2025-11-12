@@ -25,6 +25,7 @@
   "license": "MIT",
   "dependencies": {
     "@fastify/cors": "^9.0.1",
+    "@fastify/static": "^6.12.0",
     "@vercel/node": "^3.2.29",
     "dotenv": "^16.4.5",
     "ethers": "^6.13.0",

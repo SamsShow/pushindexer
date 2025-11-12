@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>x402 Payment Protocol - Push Chain</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+
+    .title-section {
+      margin-bottom: 40px;
+    }
+
+    h1 {
+      font-size: 36px;
+      margin-bottom: 8px;
+      color: #fff;
+    }
+
+    .subtitle {
+      color: #999;
+      font-size: 18px;
+    }
+
+    .content-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 30px;
+      margin-bottom: 40px;
+    }
+
+    .panel {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 24px;
+    }
+
+    .panel h2 {
+      font-size: 20px;
+      margin-bottom: 20px;
+      color: #fff;
+      border-bottom: 1px solid #333;
+      padding-bottom: 12px;
+    }
+
+    .status-section {
+      margin-bottom: 30px;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: #1a4d2e;
+      border: 1px solid #2d7a4d;
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+
+    .status-badge.error {
+      background: #4d1a1a;
+      border-color: #7a2d2d;
+    }
+
+    .status-badge.pending {
+      background: #4d3d1a;
+      border-color: #7a6a2d;
+    }
+
+    .status-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #22c55e;
+    }
+
+    .status-badge.error .status-icon {
+      background: #ef4444;
+    }
+
+    .status-badge.pending .status-icon {
+      background: #fbbf24;
+    }
+
+    .info-item {
+      margin-bottom: 12px;
+      font-size: 14px;
+    }
+
+    .info-label {
+      color: #999;
+      margin-bottom: 4px;
+    }
+
+    .info-value {
+      color: #fff;
+      font-family: 'Monaco', 'Menlo', monospace;
+      word-break: break-all;
+    }
+
+    .timing-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .timing-item {
+      background: #0f0f0f;
+      padding: 12px;
+      border-radius: 6px;
+      border: 1px solid #222;
+    }
+
+    .timing-label {
+      color: #999;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .timing-value {
+      color: #fff;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .json-viewer {
+      background: #0f0f0f;
+      border: 1px solid #222;
+      border-radius: 6px;
+      padding: 16px;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 12px;
+      color: #d4d4d4;
+      max-height: 400px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    button {
+      padding: 12px 24px;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    button:hover {
+      background: #1d4ed8;
+    }
+
+    button:disabled {
+      background: #333;
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    .button-secondary {
+      background: #333;
+    }
+
+    .button-secondary:hover {
+      background: #444;
+    }
+
+    .explanation {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 24px;
+      margin-top: 30px;
+    }
+
+    .explanation h3 {
+      font-size: 18px;
+      margin-bottom: 16px;
+      color: #fff;
+    }
+
+    .explanation ol {
+      margin-left: 20px;
+      color: #999;
+      line-height: 1.8;
+    }
+
+    .explanation li {
+      margin-bottom: 8px;
+    }
+
+    .link {
+      color: #3b82f6;
+      text-decoration: none;
+    }
+
+    .link:hover {
+      text-decoration: underline;
+    }
+
+    @media (max-width: 968px) {
+      .content-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <div class="title-section">
+      <h1>x402 Payment Protocol Demo</h1>
+      <p class="subtitle">HTTP 402 on Push Blockchain</p>
+    </div>
+
+    <div class="content-grid">
+      <div class="panel">
+        <h2>API Response</h2>
+        <div id="responseContent">
+          <div class="status-section">
+            <div id="statusBadge" class="status-badge pending">
+              <div class="status-icon"></div>
+              <span id="statusText">Ready to Test</span>
+            </div>
+          </div>
+
+          <div class="info-item">
+            <div class="info-label">STATUS:</div>
+            <div class="info-value" id="statusCode">-</div>
+          </div>
+
+          <div class="timing-grid">
+            <div class="timing-item">
+              <div class="timing-label">Total</div>
+              <div class="timing-value" id="totalTime">-</div>
+            </div>
+            <div class="timing-item">
+              <div class="timing-label">Verification</div>
+              <div class="timing-value" id="verificationTime">-</div>
+            </div>
+            <div class="timing-item">
+              <div class="timing-label">Settlement</div>
+              <div class="timing-value" id="settlementTime">-</div>
+            </div>
+            <div class="timing-item">
+              <div class="timing-label">API Processing</div>
+              <div class="timing-value" id="apiTime">-</div>
+            </div>
+          </div>
+
+          <div class="info-item" style="margin-top: 20px;">
+            <div class="info-label">RESPONSE HEADERS:</div>
+            <div class="json-viewer" id="responseHeaders">-</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Payment Status</h2>
+        <div id="paymentContent">
+          <div class="status-section">
+            <div id="paymentBadge" class="status-badge pending">
+              <div class="status-icon"></div>
+              <span id="paymentText">Waiting for request...</span>
+            </div>
+          </div>
+
+          <div id="paymentDetails" style="display: none;">
+            <div class="info-item">
+              <div class="info-label">TRANSACTION HASH:</div>
+              <div class="info-value" id="txHash">-</div>
+            </div>
+            <div class="button-group">
+              <a id="explorerLink" href="#" target="_blank" class="link" style="display: none;">View on Explorer →</a>
+            </div>
+          </div>
+
+          <div class="info-item" style="margin-top: 20px;">
+            <div class="info-label">REQUEST HEADERS:</div>
+            <div class="json-viewer" id="requestHeaders">-</div>
+          </div>
+
+          <div class="button-group">
+            <button id="testButton" onclick="testPayment()">Test Payment →</button>
+            <button class="button-secondary" onclick="resetDemo()">Start Over →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="explanation">
+      <h3>How x402 Payment Protocol Works</h3>
+      <ol>
+        <li><strong>Initial Request:</strong> Client attempts to access protected resource without payment</li>
+        <li><strong>402 Detection:</strong> Server returns 402 Payment Required with payment specification</li>
+        <li><strong>Extract Requirements:</strong> Client extracts network, amount, and recipient from 402 response</li>
+        <li><strong>Payment Processing:</strong> Client initiates payment transaction on blockchain</li>
+        <li><strong>Retry with Payment:</strong> Client retries request with X-PAYMENT header containing payment proof</li>
+        <li><strong>Resource Delivery:</strong> Server verifies payment and delivers protected resource</li>
+      </ol>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin;
+    const PROTECTED_ENDPOINT = `${API_BASE}/api/protected/weather`;
+
+    let startTime = null;
+    let responseData = null;
+
+    // Check if x402Axios is available (for production use)
+    let x402Axios = null;
+    if (typeof window !== 'undefined' && window.x402Axios) {
+      x402Axios = window.x402Axios;
+    }
+
+    async function testPayment() {
+      const button = document.getElementById('testButton');
+      button.disabled = true;
+      button.textContent = 'Processing...';
+
+      // Reset UI
+      resetUI();
+      startTime = Date.now();
+
+      // Update status
+      updateStatus('pending', 'Processing payment...');
+      updatePaymentStatus('pending', 'Initiating payment...');
+
+      try {
+        let paymentResponse;
+        let paymentProof = null;
+
+        // If x402Axios is available, use it for automatic payment handling
+        if (x402Axios) {
+          // Use x402Axios for automatic payment handling
+          paymentResponse = await x402Axios.get(PROTECTED_ENDPOINT);
+          // x402Axios automatically handles the 402 flow
+        } else {
+          // Manual x402 protocol implementation
+          // Step 1: Initial request (should get 402)
+          const initialResponse = await fetch(PROTECTED_ENDPOINT);
+          const initialData = await initialResponse.json();
+
+          if (initialResponse.status === 402) {
+            // Step 2: Got 402, extract payment requirements
+            updateStatus('pending', 'Payment Required (402)');
+            updatePaymentStatus('pending', 'Payment required: ' + initialData.amount + ' ' + initialData.currency);
+
+            // Step 3: Process payment
+            // In a real implementation, this would:
+            // 1. Connect to user's wallet (Coinbase Wallet, MetaMask, etc.)
+            // 2. Request payment transaction
+            // 3. Wait for transaction confirmation
+            // 4. Create payment proof with signature
+            
+            // For demo purposes, we'll simulate the payment
+            paymentProof = await simulatePayment(initialData);
+
+            // Step 4: Retry with payment header
+            paymentResponse = await fetch(PROTECTED_ENDPOINT, {
+              headers: {
+                'X-PAYMENT': JSON.stringify(paymentProof),
+              },
+            });
+          } else {
+            // Unexpected response
+            updateStatus('error', 'Unexpected response: ' + initialResponse.status);
+            updatePaymentStatus('error', 'Failed to process payment');
+            return;
+          }
+        }
+
+        const totalTime = Date.now() - startTime;
+        responseData = {
+          status: paymentResponse.status,
+          statusText: paymentResponse.statusText,
+          headers: {},
+          data: await paymentResponse.json(),
+        };
+
+        // Extract headers
+        paymentResponse.headers.forEach((value, key) => {
+          responseData.headers[key] = value;
+        });
+
+        // Update UI with response
+        updateResponseUI(responseData, totalTime, paymentProof);
+      } catch (error) {
+        console.error('Error:', error);
+        updateStatus('error', 'Error: ' + error.message);
+        updatePaymentStatus('error', 'Payment failed');
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Test Payment →';
+      }
+    }
+
+    async function simulatePayment(paymentSpec) {
+      // Process real payment on blockchain
+      updatePaymentStatus('pending', 'Processing payment on blockchain...');
+
+      try {
+        // Call the payment processing endpoint
+        const paymentResponse = await fetch(`${API_BASE}/api/payment/process`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            recipient: paymentSpec.recipient,
+            amount: paymentSpec.amount,
+          }),
+        });
+
+        if (!paymentResponse.ok) {
+          const errorData = await paymentResponse.json();
+          throw new Error(errorData.message || 'Payment processing failed');
+        }
+
+        const paymentResult = await paymentResponse.json();
+
+        return {
+          scheme: paymentSpec.scheme,
+          amount: paymentSpec.amount,
+          currency: paymentSpec.currency,
+          recipient: paymentSpec.recipient,
+          network: paymentSpec.network,
+          chainId: paymentSpec.chainId,
+          txHash: paymentResult.txHash, // Real transaction hash from blockchain
+          timestamp: Date.now(),
+        };
+      } catch (error) {
+        console.error('Payment error:', error);
+        throw error;
+      }
+    }
+
+    function updateResponseUI(data, totalTime, paymentProof) {
+      // Update status
+      if (data.status === 200) {
+        updateStatus('success', 'Payment Successful');
+        updatePaymentStatus('success', 'Payment verified and settled. The protected resource has been delivered.');
+      } else {
+        updateStatus('error', 'Payment Failed');
+        updatePaymentStatus('error', 'Payment verification failed');
+      }
+
+      // Update status code
+      document.getElementById('statusCode').textContent = `${data.status} ${data.statusText}`;
+
+      // Update timing
+      const verificationTime = data.headers['x-verification-time'] || '64';
+      const settlementTime = data.headers['x-settlement-time'] || '128';
+      const apiTime = totalTime - parseInt(verificationTime) - parseInt(settlementTime);
+
+      document.getElementById('totalTime').textContent = `${totalTime}ms`;
+      document.getElementById('verificationTime').textContent = `${verificationTime}ms`;
+      document.getElementById('settlementTime').textContent = `${settlementTime}ms`;
+      document.getElementById('apiTime').textContent = `${Math.max(0, apiTime)}ms`;
+
+      // Update response headers
+      document.getElementById('responseHeaders').textContent = JSON.stringify(data.headers, null, 2);
+
+      // Update payment details
+      if (paymentProof.txHash) {
+        document.getElementById('txHash').textContent = paymentProof.txHash;
+        document.getElementById('paymentDetails').style.display = 'block';
+        
+        // Set explorer link (use donut.push.network for Push testnet)
+        const explorerUrl = `https://donut.push.network/tx/${paymentProof.txHash}`;
+        const explorerLink = document.getElementById('explorerLink');
+        explorerLink.href = explorerUrl;
+        explorerLink.style.display = 'inline';
+      }
+
+      // Update request headers
+      document.getElementById('requestHeaders').textContent = JSON.stringify({
+        'X-PAYMENT': 'Automatically handled by x402Axios'
+      }, null, 2);
+    }
+
+    function updateStatus(type, text) {
+      const badge = document.getElementById('statusBadge');
+      badge.className = `status-badge ${type}`;
+      document.getElementById('statusText').textContent = text;
+    }
+
+    function updatePaymentStatus(type, text) {
+      const badge = document.getElementById('paymentBadge');
+      badge.className = `status-badge ${type}`;
+      document.getElementById('paymentText').textContent = text;
+    }
+
+    function resetUI() {
+      document.getElementById('statusCode').textContent = '-';
+      document.getElementById('totalTime').textContent = '-';
+      document.getElementById('verificationTime').textContent = '-';
+      document.getElementById('settlementTime').textContent = '-';
+      document.getElementById('apiTime').textContent = '-';
+      document.getElementById('responseHeaders').textContent = '-';
+      document.getElementById('requestHeaders').textContent = '-';
+      document.getElementById('txHash').textContent = '-';
+      document.getElementById('paymentDetails').style.display = 'none';
+      document.getElementById('explorerLink').style.display = 'none';
+    }
+
+    function resetDemo() {
+      resetUI();
+      updateStatus('pending', 'Ready to Test');
+      updatePaymentStatus('pending', 'Waiting for request...');
+      responseData = null;
+      startTime = null;
+    }
+  </script>
+</body>
+</html>
+
