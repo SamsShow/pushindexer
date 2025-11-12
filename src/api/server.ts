@@ -12,6 +12,7 @@ import { statsRoutes } from "./routes/stats.js";
 import { eventsRoutes } from "./routes/events.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { paymentRoutes } from "./routes/payment.js";
+import { paymentClientRoutes } from "./routes/payment-client.js";
 
 // Get project root - use process.cwd() for reliability
 const rootDir = process.cwd();
@@ -58,13 +59,15 @@ export async function createServer() {
 
     if (!paymentHeader) {
       // Return 402 Payment Required with payment specification
+      // recipient is the seller wallet that will receive the payment
       return reply.code(402).send({
         scheme: "exact",
         amount: "0.001",
         currency: "PUSH",
-        recipient: process.env.FACILITATOR_CONTRACT_ADDRESS || "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7",
+        recipient: config.pushChain.sellerAddress, // Seller wallet address
+        facilitator: config.pushChain.facilitatorAddress, // Facilitator contract address
         network: "push",
-        chainId: process.env.PUSH_CHAIN_ID || "42101",
+        chainId: config.pushChain.chainId.toString(),
       });
     }
 
@@ -112,6 +115,7 @@ export async function createServer() {
   await fastify.register(eventsRoutes);
   await fastify.register(metricsRoutes);
   await fastify.register(paymentRoutes);
+  await fastify.register(paymentClientRoutes);
 
   return fastify;
 }

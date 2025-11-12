@@ -8,6 +8,7 @@ export const config = {
     wsUrl: process.env.PUSH_CHAIN_WS_URL || "wss://evm.rpc-testnet-donut-node1.push.org/",
     chainId: parseInt(process.env.PUSH_CHAIN_ID || "0"),
     facilitatorAddress: process.env.FACILITATOR_CONTRACT_ADDRESS || "",
+    sellerAddress: process.env.SELLER_WALLET_ADDRESS || "0x0dFd63e8b357eD75D502bb42F6e4eC63E2D84761",
   },
   database: {
     url: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/pushindexer",
