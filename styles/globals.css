@@ -6,8 +6,8 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  background: #0a0a0a;
-  color: #e0e0e0;
+  background: #f5f1eb;
+  color: #1a1a1a;
   min-height: 100vh;
   padding: 20px;
 }
@@ -19,16 +19,19 @@ body {
 
 .title-section {
   margin-bottom: 40px;
+  text-align: center;
 }
 
 h1 {
   font-size: 36px;
   margin-bottom: 8px;
-  color: #fff;
+  color: #ec4899;
+  font-weight: 700;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
 }
 
 .subtitle {
-  color: #999;
+  color: #6b7280;
   font-size: 18px;
 }
 
@@ -40,18 +43,20 @@ h1 {
 }
 
 .panel {
-  background: #1a1a1a;
-  border: 1px solid #333;
+  background: #fefbf7;
+  border: 1px solid #fce7f3;
   border-radius: 12px;
   padding: 24px;
+  box-shadow: 0 1px 3px rgba(236, 72, 153, 0.1);
 }
 
 .panel h2 {
   font-size: 20px;
   margin-bottom: 20px;
-  color: #fff;
-  border-bottom: 1px solid #333;
+  color: #ec4899;
+  border-bottom: 1px solid #fce7f3;
   padding-bottom: 12px;
+  font-weight: 600;
 }
 
 .status-section {
@@ -63,27 +68,31 @@ h1 {
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: #1a4d2e;
-  border: 1px solid #2d7a4d;
+  background: #fce7f3;
+  border: 1px solid #f9a8d4;
   border-radius: 6px;
   margin-bottom: 16px;
+  color: #be185d;
+  font-weight: 500;
 }
 
 .status-badge.error {
-  background: #4d1a1a;
-  border-color: #7a2d2d;
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #991b1b;
 }
 
 .status-badge.pending {
-  background: #4d3d1a;
-  border-color: #7a6a2d;
+  background: #fef3c7;
+  border-color: #fcd34d;
+  color: #92400e;
 }
 
 .status-icon {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #22c55e;
+  background: #ec4899;
 }
 
 .status-badge.error .status-icon {
@@ -91,7 +100,7 @@ h1 {
 }
 
 .status-badge.pending .status-icon {
-  background: #fbbf24;
+  background: #f59e0b;
 }
 
 .info-item {
@@ -100,12 +109,13 @@ h1 {
 }
 
 .info-label {
-  color: #999;
+  color: #6b7280;
   margin-bottom: 4px;
+  font-weight: 500;
 }
 
 .info-value {
-  color: #fff;
+  color: #1a1a1a;
   font-family: 'Monaco', 'Menlo', monospace;
   word-break: break-all;
 }
@@ -118,32 +128,33 @@ h1 {
 }
 
 .timing-item {
-  background: #0f0f0f;
+  background: #faf5f0;
   padding: 12px;
   border-radius: 6px;
-  border: 1px solid #222;
+  border: 1px solid #fce7f3;
 }
 
 .timing-label {
-  color: #999;
+  color: #6b7280;
   font-size: 12px;
   margin-bottom: 4px;
+  font-weight: 500;
 }
 
 .timing-value {
-  color: #fff;
+  color: #ec4899;
   font-size: 18px;
   font-weight: 600;
 }
 
 .json-viewer {
-  background: #0f0f0f;
-  border: 1px solid #222;
+  background: #faf5f0;
+  border: 1px solid #fce7f3;
   border-radius: 6px;
   padding: 16px;
   font-family: 'Monaco', 'Menlo', monospace;
   font-size: 12px;
-  color: #d4d4d4;
+  color: #1a1a1a;
   max-height: 400px;
   overflow-y: auto;
   white-space: pre-wrap;
@@ -158,51 +169,58 @@ h1 {
 
 button {
   padding: 12px 24px;
-  background: #2563eb;
+  background: #ec4899;
   color: #fff;
   border: none;
   border-radius: 6px;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.2s;
 }
 
 button:hover {
-  background: #1d4ed8;
+  background: #db2777;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px rgba(236, 72, 153, 0.3);
 }
 
 button:disabled {
-  background: #333;
+  background: #d1d5db;
   cursor: not-allowed;
   opacity: 0.5;
 }
 
 .button-secondary {
-  background: #333;
+  background: #f3f4f6;
+  color: #6b7280;
+  border: 1px solid #e5e7eb;
 }
 
 .button-secondary:hover {
-  background: #444;
+  background: #e5e7eb;
+  color: #1a1a1a;
 }
 
 .explanation {
-  background: #1a1a1a;
-  border: 1px solid #333;
+  background: #fefbf7;
+  border: 1px solid #fce7f3;
   border-radius: 12px;
   padding: 24px;
   margin-top: 30px;
+  box-shadow: 0 1px 3px rgba(236, 72, 153, 0.1);
 }
 
 .explanation h3 {
   font-size: 18px;
   margin-bottom: 16px;
-  color: #fff;
+  color: #ec4899;
+  font-weight: 600;
 }
 
 .explanation ol {
   margin-left: 20px;
-  color: #999;
+  color: #6b7280;
   line-height: 1.8;
 }
 
@@ -211,12 +229,14 @@ button:disabled {
 }
 
 .link {
-  color: #3b82f6;
+  color: #ec4899;
   text-decoration: none;
+  font-weight: 500;
 }
 
 .link:hover {
   text-decoration: underline;
+  color: #db2777;
 }
 
 @media (max-width: 968px) {

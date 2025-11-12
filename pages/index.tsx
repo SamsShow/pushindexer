@@ -27,8 +27,11 @@ export default function Home() {
   const [showPaymentDetails, setShowPaymentDetails] = useState(false)
   const [indexedData, setIndexedData] = useState<any>(null)
   const [showIndexedData, setShowIndexedData] = useState(false)
+  const [indexerLoading, setIndexerLoading] = useState(false)
 
   const API_BASE = typeof window !== 'undefined' ? window.location.origin : ''
+  const FACILITATOR_API = 'https://pushindexer.vercel.app/api/facilitator'
+  const INDEXER_API = 'https://pushindexer.vercel.app/api/indexer'
   const PROTECTED_ENDPOINT = `${API_BASE}/api/protected/weather`
 
   useEffect(() => {
@@ -37,16 +40,34 @@ export default function Home() {
 
   const initPaymentConfig = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/payment/config`)
-      const config = await response.json()
-      setFacilitatorAddress(config.facilitatorAddress)
-      setFacilitatorABI(config.abi)
-      setChainId(config.chainId.toString())
-      if (config.sellerAddress) {
-        setEnvSellerAddress(config.sellerAddress)
+      // Try to get facilitator info from public API, fallback to local
+      try {
+        const response = await fetch(`${FACILITATOR_API}/info`)
+        if (response.ok) {
+          const config = await response.json()
+          setFacilitatorAddress(config.contractAddress)
+          setChainId(config.chainId.toString())
+        }
+      } catch (error) {
+        console.warn('Failed to fetch from public facilitator API, using local config:', error)
       }
-      if (config.buyerAddress) {
-        setEnvBuyerAddress(config.buyerAddress)
+      
+      // Get addresses from local config (always use local for addresses)
+      const localConfigResponse = await fetch(`${API_BASE}/api/payment/config`)
+      if (localConfigResponse.ok) {
+        const localConfig = await localConfigResponse.json()
+        if (localConfig.facilitatorAddress) {
+          setFacilitatorAddress(localConfig.facilitatorAddress)
+        }
+        if (localConfig.chainId) {
+          setChainId(localConfig.chainId.toString())
+        }
+        if (localConfig.sellerAddress) {
+          setEnvSellerAddress(localConfig.sellerAddress)
+        }
+        if (localConfig.buyerAddress) {
+          setEnvBuyerAddress(localConfig.buyerAddress)
+        }
       }
     } catch (error) {
       console.error('Failed to load payment config:', error)
@@ -104,17 +125,26 @@ export default function Home() {
   }
 
   const fetchIndexedData = async (txHash: string) => {
+    setIndexerLoading(true)
     try {
-      const response = await fetch(`${API_BASE}/v1/tx/${txHash}`)
+      const response = await fetch(`${INDEXER_API}/tx?hash=${txHash}`)
       if (response.ok) {
         const data = await response.json()
         setIndexedData(data)
         setShowIndexedData(true)
+        setIndexerLoading(false)
+      } else if (response.status === 404) {
+        // Transaction not indexed yet, retry after delay
+        setIndexerLoading(true)
+        setTimeout(() => fetchIndexedData(txHash), 3000)
       } else {
+        console.error('Error fetching indexed data:', response.statusText)
+        setIndexerLoading(false)
         setTimeout(() => fetchIndexedData(txHash), 3000)
       }
     } catch (error) {
       console.error('Error fetching indexed data:', error)
+      setIndexerLoading(false)
       setTimeout(() => fetchIndexedData(txHash), 3000)
     }
   }
@@ -182,7 +212,8 @@ export default function Home() {
         if (paymentProof.txHash) {
           setTxHash(paymentProof.txHash)
           setShowPaymentDetails(true)
-          setTimeout(() => fetchIndexedData(paymentProof.txHash), 2000)
+          // Start fetching indexer data immediately
+          fetchIndexedData(paymentProof.txHash)
         }
       }
     } catch (error: any) {
@@ -203,6 +234,8 @@ export default function Home() {
     setTxHash('-')
     setShowPaymentDetails(false)
     setShowIndexedData(false)
+    setIndexedData(null)
+    setIndexerLoading(false)
     setStatus({ type: 'pending', text: 'Ready to Test' })
     setPaymentStatus({ type: 'pending', text: 'Waiting for request...' })
   }
@@ -272,7 +305,7 @@ export default function Home() {
                 </div>
               </div>
 
-              {showPaymentDetails && (
+              {txHash && txHash !== '-' && (
                 <div>
                   <div className="info-item">
                     <div className="info-label">TRANSACTION HASH:</div>
@@ -306,7 +339,7 @@ export default function Home() {
               </div>
 
               {(envBuyerAddress || envSellerAddress) && (
-                <div style={{ marginTop: '16px', padding: '12px', background: '#0f0f0f', borderRadius: '6px', border: '1px solid #222' }}>
+                <div style={{ marginTop: '16px', padding: '12px', background: '#faf5f0', borderRadius: '6px', border: '1px solid #fce7f3' }}>
                   {envBuyerAddress && (
                     <div className="info-item">
                       <div className="info-label">Buyer Address:</div>
@@ -322,10 +355,114 @@ export default function Home() {
                 </div>
               )}
 
-              {showIndexedData && indexedData && (
+              {txHash && txHash !== '-' && (
                 <div style={{ marginTop: '20px' }}>
-                  <h3 style={{ fontSize: '16px', marginBottom: '12px', color: '#fff' }}>Indexed Transaction Data</h3>
-                  <div className="json-viewer">{JSON.stringify(indexedData, null, 2)}</div>
+                  <h3 style={{ fontSize: '16px', marginBottom: '12px', color: '#ec4899', fontWeight: '600' }}>
+                    Indexed Transaction Data
+                  </h3>
+                  {indexerLoading && !showIndexedData && (
+                    <div style={{ background: '#faf5f0', border: '1px solid #fce7f3', borderRadius: '6px', padding: '16px', textAlign: 'center' }}>
+                      <div style={{ color: '#6b7280' }}>Waiting for indexer to process transaction...</div>
+                      <div style={{ color: '#ec4899', fontSize: '12px', marginTop: '8px' }}>This may take a few seconds</div>
+                    </div>
+                  )}
+                  {showIndexedData && indexedData && indexedData.transaction && (
+                    <div style={{ background: '#faf5f0', border: '1px solid #fce7f3', borderRadius: '6px', padding: '16px' }}>
+                      <div style={{ marginBottom: '12px', paddingBottom: '12px', borderBottom: '1px solid #fce7f3' }}>
+                        <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>Indexed by Push Chain Indexer</div>
+                        <div style={{ fontSize: '14px', color: '#ec4899', fontWeight: '600' }}>Transaction Hash: {indexedData.transaction.txHash}</div>
+                      </div>
+                      <div className="info-item">
+                        <div className="info-label">Indexing Status:</div>
+                        <div className="info-value" style={{ color: indexedData.transaction.status === 'confirmed' ? '#22c55e' : '#f59e0b' }}>
+                          {indexedData.transaction.status}
+                        </div>
+                      </div>
+                      <div className="info-item">
+                        <div className="info-label">Block Number:</div>
+                        <div className="info-value">{indexedData.transaction.blockNumber}</div>
+                      </div>
+                      {indexedData.transaction.blockTimestamp && (
+                        <div className="info-item">
+                          <div className="info-label">Block Timestamp:</div>
+                          <div className="info-value">
+                            {new Date(indexedData.transaction.blockTimestamp).toLocaleString()}
+                          </div>
+                        </div>
+                      )}
+                      <div className="info-item">
+                        <div className="info-label">Transaction Type:</div>
+                        <div className="info-value">
+                          {indexedData.transaction.txType === 0 ? 'Native Transfer' : 
+                           indexedData.transaction.txType === 1 ? 'ERC20 Transfer' : 
+                           indexedData.transaction.txType === 2 ? 'Cross-Chain' : 'Unknown'}
+                        </div>
+                      </div>
+                      <div className="info-item">
+                        <div className="info-label">From (Sender):</div>
+                        <div className="info-value">{indexedData.transaction.sender}</div>
+                      </div>
+                      <div className="info-item">
+                        <div className="info-label">To (Recipient):</div>
+                        <div className="info-value">{indexedData.transaction.target}</div>
+                      </div>
+                      {indexedData.transaction.facilitator && (
+                        <div className="info-item">
+                          <div className="info-label">Facilitator Contract:</div>
+                          <div className="info-value">{indexedData.transaction.facilitator}</div>
+                        </div>
+                      )}
+                      <div className="info-item">
+                        <div className="info-label">Value:</div>
+                        <div className="info-value" style={{ color: '#ec4899', fontWeight: '600' }}>
+                          {indexedData.transaction.value ? (parseInt(indexedData.transaction.value) / 1e18).toFixed(6) : '0'} PUSH
+                        </div>
+                      </div>
+                      <div className="info-item">
+                        <div className="info-label">Gas Used:</div>
+                        <div className="info-value">{indexedData.transaction.gasUsed || '-'}</div>
+                      </div>
+                      {indexedData.transaction.gasPrice && (
+                        <div className="info-item">
+                          <div className="info-label">Gas Price:</div>
+                          <div className="info-value">{indexedData.transaction.gasPrice}</div>
+                        </div>
+                      )}
+                      {indexedData.transaction.chainId && (
+                        <div className="info-item">
+                          <div className="info-label">Chain ID:</div>
+                          <div className="info-value">{indexedData.transaction.chainId}</div>
+                        </div>
+                      )}
+                      {indexedData.events && indexedData.events.length > 0 && (
+                        <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #fce7f3' }}>
+                          <div className="info-label" style={{ marginBottom: '12px', fontWeight: '600', color: '#ec4899' }}>Indexed Events ({indexedData.events.length}):</div>
+                          {indexedData.events.map((event: any, idx: number) => (
+                            <div key={idx} style={{ marginBottom: '12px', padding: '12px', background: '#fefbf7', borderRadius: '4px', border: '1px solid #fce7f3' }}>
+                              <div style={{ fontWeight: '600', color: '#ec4899', marginBottom: '6px' }}>
+                                {event.eventName} (Log Index: {event.logIndex})
+                              </div>
+                              <div style={{ fontSize: '12px', color: '#6b7280', fontFamily: 'monospace' }}>
+                                <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                  {JSON.stringify(event.eventArgs, null, 2)}
+                                </pre>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {indexedData.transaction.decoded && (
+                        <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #fce7f3' }}>
+                          <div className="info-label" style={{ marginBottom: '8px', fontWeight: '600', color: '#ec4899' }}>Decoded Data:</div>
+                          <div style={{ fontSize: '12px', color: '#6b7280', fontFamily: 'monospace', background: '#fefbf7', padding: '8px', borderRadius: '4px' }}>
+                            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                              {JSON.stringify(indexedData.transaction.decoded, null, 2)}
+                            </pre>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
