@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "echo 'No build needed for Vercel serverless functions'",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "indexer": "tsx src/indexer/indexer.ts",
@@ -25,20 +25,20 @@
   "license": "MIT",
   "dependencies": {
     "@fastify/cors": "^9.0.1",
+    "@vercel/node": "^3.2.29",
+    "dotenv": "^16.4.5",
     "ethers": "^6.13.0",
     "fastify": "^4.26.0",
-    "pg": "^8.11.3",
-    "dotenv": "^16.4.5"
+    "pg": "^8.11.3"
   },
   "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
     "@types/node": "^20.11.24",
     "@types/pg": "^8.10.9",
     "@typescript-eslint/eslint-plugin": "^7.1.0",
     "@typescript-eslint/parser": "^7.1.0",
-    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
     "hardhat": "^2.20.0",
     "tsx": "^4.7.1",
     "typescript": "^5.3.3"
   }
 }
-
