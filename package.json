@@ -5,9 +5,10 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "echo 'No build needed for Vercel serverless functions'",
-    "start": "node dist/index.js",
-    "dev": "tsx watch src/index.ts",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
     "indexer": "tsx src/indexer/indexer.ts",
     "api": "tsx src/api/server.ts",
     "deploy": "hardhat run scripts/deploy.ts --network pushTestnet",
@@ -30,12 +31,17 @@
     "dotenv": "^16.4.5",
     "ethers": "^6.13.0",
     "fastify": "^4.26.0",
-    "pg": "^8.11.3"
+    "next": "^16.0.2",
+    "pg": "^8.11.3",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",
     "@types/node": "^20.11.24",
     "@types/pg": "^8.10.9",
+    "@types/react": "^19.2.4",
+    "@types/react-dom": "^19.2.3",
     "@typescript-eslint/eslint-plugin": "^7.1.0",
     "@typescript-eslint/parser": "^7.1.0",
     "hardhat": "^2.20.0",
