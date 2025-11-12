@@ -14,6 +14,8 @@ export async function paymentClientRoutes(fastify: FastifyInstance) {
       facilitatorAddress: config.pushChain.facilitatorAddress,
       chainId: config.pushChain.chainId,
       rpcUrl: config.pushChain.rpcUrl,
+      sellerAddress: config.pushChain.sellerAddress,
+      buyerAddress: config.pushChain.buyerAddress,
       abi: [
         "function facilitateNativeTransfer(address recipient, uint256 amount) external payable",
       ],

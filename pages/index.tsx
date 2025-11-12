@@ -3,15 +3,14 @@ import Head from 'next/head'
 
 declare global {
   interface Window {
-    ethereum?: any
-    ethers?: any
     x402Axios?: any
   }
 }
 
 export default function Home() {
-  const [buyerWallet, setBuyerWallet] = useState<string | null>(null)
   const [sellerAddress, setSellerAddress] = useState<string>('')
+  const [envBuyerAddress, setEnvBuyerAddress] = useState<string>('')
+  const [envSellerAddress, setEnvSellerAddress] = useState<string>('')
   const [facilitatorAddress, setFacilitatorAddress] = useState<string>('')
   const [facilitatorABI, setFacilitatorABI] = useState<any>(null)
   const [chainId, setChainId] = useState<string>('42101')
@@ -43,54 +42,18 @@ export default function Home() {
       setFacilitatorAddress(config.facilitatorAddress)
       setFacilitatorABI(config.abi)
       setChainId(config.chainId.toString())
+      if (config.sellerAddress) {
+        setEnvSellerAddress(config.sellerAddress)
+      }
+      if (config.buyerAddress) {
+        setEnvBuyerAddress(config.buyerAddress)
+      }
     } catch (error) {
       console.error('Failed to load payment config:', error)
     }
   }
 
-  const connectWallet = async () => {
-    try {
-      if (typeof window === 'undefined' || !window.ethereum) {
-        alert('Please install MetaMask or another Web3 wallet')
-        return
-      }
-
-      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' })
-      setBuyerWallet(accounts[0])
-
-      const networkId = await window.ethereum.request({ method: 'eth_chainId' })
-      const targetChainId = `0x${parseInt(chainId || '42101').toString(16)}`
-
-      if (networkId !== targetChainId) {
-        try {
-          await window.ethereum.request({
-            method: 'wallet_switchEthereumChain',
-            params: [{ chainId: targetChainId }],
-          })
-        } catch (switchError) {
-          await window.ethereum.request({
-            method: 'wallet_addEthereumChain',
-            params: [{
-              chainId: targetChainId,
-              chainName: 'Push Chain Testnet',
-              nativeCurrency: { name: 'PUSH', symbol: 'PUSH', decimals: 18 },
-              rpcUrls: ['https://evm.rpc-testnet-donut-node1.push.org/'],
-              blockExplorerUrls: ['https://donut.push.network'],
-            }],
-          })
-        }
-      }
-    } catch (error: any) {
-      console.error('Error connecting wallet:', error)
-      alert('Failed to connect wallet: ' + error.message)
-    }
-  }
-
   const simulatePayment = async (paymentSpec: any) => {
-    if (!buyerWallet) {
-      throw new Error('Please connect your wallet first')
-    }
-
     setPaymentStatus({ type: 'pending', text: 'Processing payment on blockchain...' })
 
     try {
@@ -100,42 +63,41 @@ export default function Home() {
       setSellerAddress(paymentSpec.recipient)
       setFacilitatorAddress(paymentSpec.facilitator || config.facilitatorAddress)
 
-      if (!window.ethers) {
-        throw new Error('Ethers.js not loaded')
+      // Use server-side payment endpoint with buyer's private key
+      setPaymentStatus({ type: 'pending', text: 'Sending payment transaction...' })
+      
+      const paymentResponse = await fetch(`${API_BASE}/api/payment/process`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          recipient: paymentSpec.recipient,
+          amount: paymentSpec.amount,
+        }),
+      })
+
+      if (!paymentResponse.ok) {
+        const errorData = await paymentResponse.json()
+        throw new Error(errorData.message || errorData.error || 'Payment failed')
       }
 
-      const provider = new window.ethers.providers.Web3Provider(window.ethereum)
-      const signer = provider.getSigner()
-      const facilitatorContract = new window.ethers.Contract(
-        facilitatorAddress || paymentSpec.facilitator || config.facilitatorAddress,
-        config.abi,
-        signer
-      )
+      const paymentResult = await paymentResponse.json()
 
-      const amountWei = window.ethers.utils.parseEther(paymentSpec.amount)
-
-      setPaymentStatus({ type: 'pending', text: 'Waiting for transaction confirmation...' })
-      const tx = await facilitatorContract.facilitateNativeTransfer(
-        paymentSpec.recipient,
-        amountWei,
-        { value: amountWei }
-      )
-
-      setPaymentStatus({ type: 'pending', text: 'Transaction sent, waiting for confirmation...' })
-      const receipt = await tx.wait()
+      setPaymentStatus({ type: 'pending', text: 'Transaction confirmed, preparing payment proof...' })
 
       return {
         scheme: paymentSpec.scheme,
         amount: paymentSpec.amount,
         currency: paymentSpec.currency,
         recipient: paymentSpec.recipient,
-        facilitator: facilitatorAddress || paymentSpec.facilitator,
+        facilitator: facilitatorAddress || paymentSpec.facilitator || config.facilitatorAddress,
         network: paymentSpec.network,
-        chainId: paymentSpec.chainId,
-        txHash: receipt.transactionHash,
+        chainId: paymentSpec.chainId || paymentResult.chainId,
+        txHash: paymentResult.txHash,
         timestamp: Date.now(),
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Payment error:', error)
       throw error
     }
@@ -335,10 +297,7 @@ export default function Home() {
               </div>
 
               <div className="button-group">
-                <button onClick={connectWallet} disabled={!!buyerWallet}>
-                  {buyerWallet ? 'Wallet Connected' : 'Connect Wallet'}
-                </button>
-                <button onClick={testPayment} disabled={!buyerWallet}>
+                <button onClick={testPayment}>
                   Test Payment →
                 </button>
                 <button className="button-secondary" onClick={resetDemo}>
@@ -346,18 +305,18 @@ export default function Home() {
                 </button>
               </div>
 
-              {(buyerWallet || sellerAddress) && (
+              {(envBuyerAddress || envSellerAddress) && (
                 <div style={{ marginTop: '16px', padding: '12px', background: '#0f0f0f', borderRadius: '6px', border: '1px solid #222' }}>
-                  {buyerWallet && (
+                  {envBuyerAddress && (
                     <div className="info-item">
-                      <div className="info-label">Buyer Wallet:</div>
-                      <div className="info-value">{buyerWallet}</div>
+                      <div className="info-label">Buyer Address:</div>
+                      <div className="info-value">{envBuyerAddress}</div>
                     </div>
                   )}
-                  {sellerAddress && (
+                  {envSellerAddress && (
                     <div className="info-item">
-                      <div className="info-label">Seller Wallet:</div>
-                      <div className="info-value">{sellerAddress}</div>
+                      <div className="info-label">Seller Address:</div>
+                      <div className="info-value">{envSellerAddress}</div>
                     </div>
                   )}
                 </div>

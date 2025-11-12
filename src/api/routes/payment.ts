@@ -27,10 +27,11 @@ export async function paymentRoutes(fastify: FastifyInstance) {
 
       const rpcUrl = config.pushChain.rpcUrl;
       const contractAddress = config.pushChain.facilitatorAddress;
-      const privateKey = process.env.PRIVATE_KEY;
+      // Use buyer's private key if available, otherwise fall back to PRIVATE_KEY
+      const privateKey = config.pushChain.buyerPrivateKey || process.env.PRIVATE_KEY;
 
       if (!rpcUrl || !contractAddress || !privateKey) {
-        return reply.code(500).send({ error: "Server configuration error" });
+        return reply.code(500).send({ error: "Server configuration error: Missing RPC URL, contract address, or private key" });
       }
 
       const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -54,16 +55,17 @@ export async function paymentRoutes(fastify: FastifyInstance) {
 
       logger.info(`Payment transaction sent: ${tx.hash}`);
 
-      // Wait for transaction to be mined (optional - you can return immediately)
-      // const receipt = await tx.wait();
-      // logger.info(`Transaction confirmed in block: ${receipt.blockNumber}`);
+      // Wait for transaction to be mined for demo purposes
+      const receipt = await tx.wait();
+      logger.info(`Transaction confirmed in block: ${receipt.blockNumber}`);
 
       return reply.send({
         success: true,
-        txHash: tx.hash,
+        txHash: receipt.transactionHash,
         recipient,
         amount: amount.toString(),
         chainId: (await provider.getNetwork()).chainId.toString(),
+        blockNumber: receipt.blockNumber,
       });
     } catch (error: any) {
       logger.error("Error processing payment:", error);
