@@ -10,7 +10,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       scheme: "exact",
       amount: "0.001",
       currency: "PUSH",
-      recipient: process.env.FACILITATOR_CONTRACT_ADDRESS || "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7",
+      recipient: process.env.SELLER_WALLET_ADDRESS || "0x0dFd63e8b357eD75D502bb42F6e4eC63E2D84761",
+      facilitator: process.env.FACILITATOR_CONTRACT_ADDRESS || "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7",
       network: "push",
       chainId: process.env.PUSH_CHAIN_ID || "42101",
     });
