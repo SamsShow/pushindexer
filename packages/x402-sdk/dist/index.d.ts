@@ -35,29 +35,35 @@ interface PaymentProof {
  */
 interface X402ClientConfig {
     /**
-     * Endpoint URL for processing payments (server-side payment processor)
-     */
-    paymentEndpoint: string;
-    /**
-     * Facilitator contract address
-     */
-    facilitatorAddress?: string;
-    /**
-     * Chain ID (default: 42101 for Push Chain testnet)
-     */
-    chainId?: number | string;
-    /**
-     * Base URL for API calls (optional, defaults to current origin in browser)
+     * Optional: Base URL for API calls
+     * If not provided, use full URLs in requests
      */
     baseURL?: string;
     /**
-     * Custom axios request config
+     * Optional: Custom axios request config
+     * Merged with default axios instance config
      */
     axiosConfig?: AxiosRequestConfig;
     /**
-     * Callback for payment status updates (optional)
+     * Optional: Callback for payment status updates
+     * Called with status messages during payment processing
      */
     onPaymentStatus?: (status: string) => void;
+    /**
+     * Optional: Override public facilitator API endpoint
+     * Default: https://pushindexer.vercel.app/api/payment/process
+     */
+    paymentEndpoint?: string;
+    /**
+     * Optional: Facilitator contract address
+     * Default: 0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7
+     */
+    facilitatorAddress?: string;
+    /**
+     * Optional: Chain ID
+     * Default: 42101 (Push Chain testnet)
+     */
+    chainId?: number | string;
 }
 /**
  * Payment processor response
@@ -74,7 +80,30 @@ interface PaymentProcessorResponse {
 /**
  * Creates an axios instance with x402 payment interceptor
  * Automatically handles 402 Payment Required responses
+ *
+ * This is a drop-in replacement for axios - use it exactly like axios!
+ *
+ * @param config - Optional configuration for the x402 client
+ * @returns Configured axios instance with payment interceptor
+ *
+ * @example
+ * ```typescript
+ * // Simplest usage - just use it like axios!
+ * const client = createX402Client();
+ * const response = await client.get('https://api.example.com/protected/resource');
+ *
+ * // With base URL
+ * const client = createX402Client({
+ *   baseURL: 'https://api.example.com',
+ * });
+ * const response = await client.get('/protected/resource');
+ *
+ * // With payment status callback
+ * const client = createX402Client({
+ *   onPaymentStatus: (status) => console.log(status),
+ * });
+ * ```
  */
-declare function createX402Client(config: X402ClientConfig): AxiosInstance;
+declare function createX402Client(config?: X402ClientConfig): AxiosInstance;
 
 export { type PaymentProcessorResponse, type PaymentProof, type PaymentRequirements, type X402ClientConfig, createX402Client };

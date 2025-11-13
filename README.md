@@ -4,12 +4,11 @@ A complete implementation of the x402 Payment Protocol for Push Chain, including
 
 ## Overview
 
-This repository contains four main components:
+This repository contains three main components:
 
 1. **Facilitator API** - Smart contract interaction endpoints for x402 payments
 2. **Indexer API** - Transaction indexing and query endpoints
 3. **x402 SDK** - NPM-publishable SDK for automatic 402 payment handling
-4. **Demo Page** - Simple test interface for all components
 
 ## Project Structure
 
@@ -17,12 +16,11 @@ This repository contains four main components:
 ├── api/
 │   ├── facilitator/     # Facilitator contract endpoints
 │   ├── indexer/         # Indexer query endpoints
-│   ├── demo/            # Demo protected endpoint
 │   └── payment/         # Payment processing endpoint
 ├── packages/
 │   └── x402-sdk/        # x402 SDK package (npm publishable)
 ├── pages/
-│   └── demo.tsx         # Simple demo page
+│   └── api/             # Next.js API routes
 ├── src/
 │   ├── indexer/         # Indexer service code
 │   └── db/              # Database client and schema
@@ -66,7 +64,7 @@ npm run db:migrate
 ### Development
 
 ```bash
-# Run Next.js dev server (includes demo page)
+# Run Next.js dev server
 npm run dev
 
 # Build SDK
@@ -140,10 +138,6 @@ const response = await client.get('https://api.example.com/protected/resource');
 ```
 
 See [packages/x402-sdk/README.md](./packages/x402-sdk/README.md) for detailed SDK documentation.
-
-### 4. Demo Page
-
-Simple test interface at `/demo` to test all components.
 
 ## Deployment
 
