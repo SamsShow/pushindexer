@@ -51,12 +51,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       gasLimit: gasEstimate,
     });
 
+    console.log('Transaction sent, hash:', tx.hash);
+
     // Wait for transaction to be mined for demo purposes
     const receipt = await tx.wait();
 
+    console.log('Transaction receipt:', {
+      hash: receipt.hash,
+      transactionHash: receipt.transactionHash,
+      blockNumber: receipt.blockNumber,
+    });
+
+    // In ethers v6, use tx.hash or receipt.hash (they're the same)
+    const transactionHash = tx.hash || receipt.hash || receipt.transactionHash;
+
+    if (!transactionHash) {
+      console.error('No transaction hash found in tx or receipt!', { tx, receipt });
+    }
+
     return res.status(200).json({
       success: true,
-      txHash: receipt.transactionHash,
+      txHash: transactionHash,
       recipient,
       amount: amount.toString(),
       chainId: (await provider.getNetwork()).chainId.toString(),

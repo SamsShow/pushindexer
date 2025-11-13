@@ -44,9 +44,9 @@ export default function Home() {
       try {
         const response = await fetch(`${FACILITATOR_API}/info`)
         if (response.ok) {
-          const config = await response.json()
+      const config = await response.json()
           setFacilitatorAddress(config.contractAddress)
-          setChainId(config.chainId.toString())
+      setChainId(config.chainId.toString())
         }
       } catch (error) {
         console.warn('Failed to fetch from public facilitator API, using local config:', error)
@@ -87,6 +87,9 @@ export default function Home() {
       // Use server-side payment endpoint with buyer's private key
       setPaymentStatus({ type: 'pending', text: 'Sending payment transaction...' })
       
+      console.log('Calling payment API:', `${API_BASE}/api/payment/process`)
+      console.log('Payment request body:', { recipient: paymentSpec.recipient, amount: paymentSpec.amount })
+      
       const paymentResponse = await fetch(`${API_BASE}/api/payment/process`, {
         method: 'POST',
         headers: {
@@ -98,16 +101,21 @@ export default function Home() {
         }),
       })
 
+      console.log('Payment API response status:', paymentResponse.status, paymentResponse.statusText)
+
       if (!paymentResponse.ok) {
         const errorData = await paymentResponse.json()
+        console.error('Payment API error:', errorData)
         throw new Error(errorData.message || errorData.error || 'Payment failed')
       }
 
       const paymentResult = await paymentResponse.json()
+      console.log('✅ Payment API response:', paymentResult)
+      console.log('✅ Transaction hash from API:', paymentResult.txHash)
 
       setPaymentStatus({ type: 'pending', text: 'Transaction confirmed, preparing payment proof...' })
 
-      return {
+      const paymentProof = {
         scheme: paymentSpec.scheme,
         amount: paymentSpec.amount,
         currency: paymentSpec.currency,
@@ -118,6 +126,15 @@ export default function Home() {
         txHash: paymentResult.txHash,
         timestamp: Date.now(),
       }
+      
+      console.log('Payment proof created:', paymentProof)
+      console.log('Transaction hash in proof:', paymentProof.txHash)
+      
+      if (!paymentProof.txHash) {
+        console.error('⚠️ WARNING: No txHash in payment result!', paymentResult)
+      }
+      
+      return paymentProof
     } catch (error: any) {
       console.error('Payment error:', error)
       throw error
@@ -125,26 +142,51 @@ export default function Home() {
   }
 
   const fetchIndexedData = async (txHash: string) => {
+    if (!txHash || txHash === '-') {
+      console.warn('Invalid transaction hash:', txHash)
+      return
+    }
+    
     setIndexerLoading(true)
+    
+    // Use local API (same origin, no CORS issues)
+    const indexerUrl = `${API_BASE}/api/indexer/tx?hash=${txHash}`
+    console.log('Fetching from local indexer API:', indexerUrl)
+    
     try {
-      const response = await fetch(`${INDEXER_API}/tx?hash=${txHash}`)
+      const response = await fetch(indexerUrl, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+        },
+      })
+      console.log('Indexer API response status:', response.status)
+      
       if (response.ok) {
         const data = await response.json()
+        console.log('✅ Indexer data received:', data)
         setIndexedData(data)
         setShowIndexedData(true)
         setIndexerLoading(false)
+        return
       } else if (response.status === 404) {
         // Transaction not indexed yet, retry after delay
+        console.log('Transaction not indexed yet (404), retrying in 3 seconds...')
         setIndexerLoading(true)
         setTimeout(() => fetchIndexedData(txHash), 3000)
+        return
       } else {
-        console.error('Error fetching indexed data:', response.statusText)
+        const errorText = await response.text()
+        console.error('Error fetching indexed data:', response.status, errorText)
         setIndexerLoading(false)
+        // Still retry in case it's a temporary error
         setTimeout(() => fetchIndexedData(txHash), 3000)
+        return
       }
     } catch (error) {
-      console.error('Error fetching indexed data:', error)
+      console.error('Error fetching from indexer API:', error)
       setIndexerLoading(false)
+      // Retry after delay
       setTimeout(() => fetchIndexedData(txHash), 3000)
     }
   }
@@ -174,6 +216,7 @@ export default function Home() {
         setPaymentStatus({ type: 'pending', text: `Payment required: ${initialData.amount} ${initialData.currency}` })
 
         const paymentProof = await simulatePayment(initialData)
+        console.log('Payment proof returned from simulatePayment:', paymentProof)
 
         const paymentResponse = await fetch(PROTECTED_ENDPOINT, {
           headers: {
@@ -209,11 +252,34 @@ export default function Home() {
           setPaymentStatus({ type: 'error', text: 'Payment verification failed' })
         }
 
-        if (paymentProof.txHash) {
-          setTxHash(paymentProof.txHash)
+        // Extract transaction hash from payment proof
+        const transactionHash = paymentProof.txHash
+        console.log('Payment proof:', paymentProof)
+        console.log('Transaction hash from payment proof:', transactionHash)
+        
+        if (transactionHash) {
+          console.log('✅ Transaction hash received:', transactionHash)
+          setTxHash(transactionHash)
           setShowPaymentDetails(true)
           // Start fetching indexer data immediately
-          fetchIndexedData(paymentProof.txHash)
+          console.log('🚀 Starting to fetch indexer data for:', transactionHash)
+          fetchIndexedData(transactionHash)
+        } else {
+          console.error('❌ No transaction hash in payment proof!', paymentProof)
+          // Try to extract from response headers
+          const paymentResponseHeader = headers['x-payment-response']
+          if (paymentResponseHeader) {
+            try {
+              const parsedPayment = JSON.parse(paymentResponseHeader)
+              if (parsedPayment.txHash) {
+                console.log('✅ Found transaction hash in response headers:', parsedPayment.txHash)
+                setTxHash(parsedPayment.txHash)
+                fetchIndexedData(parsedPayment.txHash)
+              }
+            } catch (e) {
+              console.error('Failed to parse payment response header:', e)
+            }
+          }
         }
       }
     } catch (error: any) {
@@ -306,7 +372,7 @@ export default function Home() {
               </div>
 
               {txHash && txHash !== '-' && (
-                <div>
+                <div style={{ marginBottom: '20px' }}>
                   <div className="info-item">
                     <div className="info-label">TRANSACTION HASH:</div>
                     <div className="info-value">{txHash}</div>
@@ -355,15 +421,34 @@ export default function Home() {
                 </div>
               )}
 
+              {/* Debug: Always show txHash status */}
+              <div style={{ marginTop: '20px', padding: '12px', background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '6px', fontSize: '12px' }}>
+                <div style={{ color: '#991b1b', fontWeight: '600', marginBottom: '4px' }}>Debug Info:</div>
+                <div style={{ color: '#991b1b' }}>txHash: {txHash || 'NOT SET'}</div>
+                <div style={{ color: '#991b1b' }}>indexerLoading: {indexerLoading ? 'true' : 'false'}</div>
+                <div style={{ color: '#991b1b' }}>showIndexedData: {showIndexedData ? 'true' : 'false'}</div>
+              </div>
+
+              {/* Indexer section - always show when txHash exists */}
               {txHash && txHash !== '-' && (
-                <div style={{ marginTop: '20px' }}>
-                  <h3 style={{ fontSize: '16px', marginBottom: '12px', color: '#ec4899', fontWeight: '600' }}>
-                    Indexed Transaction Data
+                <div style={{ marginTop: '24px', padding: '20px', background: '#fefbf7', border: '2px solid #ec4899', borderRadius: '8px', boxShadow: '0 4px 6px rgba(236, 72, 153, 0.2)' }}>
+                  <h3 style={{ fontSize: '20px', marginBottom: '16px', color: '#ec4899', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    📊 Indexed Transaction Data
                   </h3>
-                  {indexerLoading && !showIndexedData && (
-                    <div style={{ background: '#faf5f0', border: '1px solid #fce7f3', borderRadius: '6px', padding: '16px', textAlign: 'center' }}>
-                      <div style={{ color: '#6b7280' }}>Waiting for indexer to process transaction...</div>
-                      <div style={{ color: '#ec4899', fontSize: '12px', marginTop: '8px' }}>This may take a few seconds</div>
+                  {!showIndexedData && (
+                    <div style={{ background: '#faf5f0', border: '1px solid #fce7f3', borderRadius: '6px', padding: '24px', textAlign: 'center' }}>
+                      <div style={{ color: '#6b7280', marginBottom: '12px', fontSize: '16px', fontWeight: '500' }}>
+                        {indexerLoading ? '⏳ Waiting for indexer to process transaction...' : '🔄 Fetching transaction from indexer...'}
+                      </div>
+                      <div style={{ color: '#ec4899', fontSize: '13px', marginTop: '12px', fontFamily: 'monospace', background: '#fefbf7', padding: '8px', borderRadius: '4px', wordBreak: 'break-all' }}>
+                        Hash: {txHash}
+                      </div>
+                      <div style={{ color: '#6b7280', fontSize: '12px', marginTop: '12px', fontFamily: 'monospace' }}>
+                        Querying: {INDEXER_API}/tx?hash={txHash}
+                      </div>
+                      <div style={{ color: '#6b7280', fontSize: '11px', marginTop: '8px', fontStyle: 'italic' }}>
+                        This may take a few seconds while the indexer processes the transaction
+                      </div>
                     </div>
                   )}
                   {showIndexedData && indexedData && indexedData.transaction && (
