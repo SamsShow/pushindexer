@@ -7,7 +7,11 @@ Just use it like axios - it automatically handles payments when you hit a protec
 ## Installation
 
 ```bash
+# Basic installation
 npm install push-x402 axios
+
+# If using wallet provider (browser/client-side), also install ethers
+npm install push-x402 axios ethers
 ```
 
 ## Quick Start
@@ -63,7 +67,7 @@ await client.patch('/api/resource', { data: 'value' });
 
 ```typescript
 import { useState } from 'react';
-import { createX402Client } from '@pushchain/x402-sdk';
+import { createX402Client } from 'push-x402';
 
 function MyComponent() {
   const [data, setData] = useState(null);
@@ -118,14 +122,15 @@ export default async function handler(
 
   if (!paymentHeader) {
     // Return 402 Payment Required
+    // Facilitator address is optional - SDK uses default if not provided
     return res.status(402).json({
       scheme: 'exact',
       amount: '0.001', // Amount in PUSH tokens
       currency: 'PUSH',
       recipient: '0xYourSellerWalletAddress', // Your wallet address
-      facilitator: '0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7',
       network: 'push',
       chainId: 42101,
+      // facilitator is optional - SDK has default: 0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7
     });
   }
 
@@ -152,9 +157,9 @@ app.get('/api/protected/resource', (req, res) => {
       amount: '0.001',
       currency: 'PUSH',
       recipient: '0xYourSellerWalletAddress',
-      facilitator: '0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7',
       network: 'push',
       chainId: 42101,
+      // facilitator is optional - SDK uses default
     });
   }
 
@@ -171,12 +176,16 @@ Your 402 response must include:
   scheme: 'exact',           // Payment scheme
   amount: '0.001',           // Amount as string
   currency: 'PUSH',          // Currency name
-  recipient: '0x...',        // Your wallet address
-  facilitator: '0x...',      // Facilitator contract (optional, SDK has default)
+  recipient: '0x...',        // Your wallet address (required)
   network: 'push',           // Network name
   chainId: 42101,            // Chain ID
+  // facilitator is optional - SDK uses default if not provided
 }
 ```
+
+**Required fields:** `amount`, `currency`, `recipient`, `network`, `chainId`
+
+**Optional fields:** `facilitator` (SDK has default: `0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7`)
 
 **Alternative field names** (SDK supports both):
 - `amount` or `maxAmountRequired`
@@ -226,6 +235,24 @@ interface X402ClientConfig {
    * Default: 42101 (Push Chain testnet)
    */
   chainId?: number | string;
+  
+  /**
+   * Optional: Buyer's private key for seamless transactions (agents/server-side)
+   * ⚠️ WARNING: Only use in secure server-side environments!
+   * Never expose private keys in client-side code or public repositories.
+   * If provided, transactions will be signed automatically without manual approval.
+   * Perfect for automated agents and server-side applications.
+   */
+  privateKey?: string;
+  
+  /**
+   * Optional: Wallet provider for browser/client-side transactions
+   * Accepts ethers.js providers (e.g., window.ethereum from MetaMask)
+   * If provided, transactions will prompt user for approval in their wallet.
+   * Perfect for browser applications where users have wallet extensions.
+   * Requires: npm install ethers
+   */
+  walletProvider?: any; // ethers.Provider type
 }
 ```
 
@@ -319,6 +346,92 @@ const client = createX402Client({
   },
 });
 ```
+
+### Payment Options: Choose What Works for You
+
+The SDK supports **three payment methods** - choose based on your use case:
+
+#### Option 1: Private Key (Agents/Server-Side) ⚡
+
+Perfect for automated agents and server-side applications. Transactions are signed automatically.
+
+```typescript
+// ⚠️ WARNING: Only use private keys in secure server-side environments!
+// Never expose private keys in client-side code or public repositories.
+
+const client = createX402Client({
+  baseURL: 'https://api.example.com',
+  privateKey: process.env.BUYER_PRIVATE_KEY, // From environment variable
+  onPaymentStatus: (status) => {
+    console.log('Payment:', status);
+  },
+});
+
+// Transactions happen automatically - perfect for agents!
+const response = await client.get('/protected/resource');
+```
+
+**Use Cases:**
+- ✅ Automated agents and bots
+- ✅ Server-side applications (Node.js, API routes)
+- ✅ Background jobs and scheduled tasks
+- ✅ Testing and development
+
+**Security:**
+- ✅ Always use environment variables
+- ✅ Never commit private keys to git
+- ✅ Use HTTPS only
+
+#### Option 2: Wallet Provider (Browser/Client-Side) 🔐
+
+Perfect for browser applications. Users approve transactions in their wallet (MetaMask, WalletConnect, etc.).
+
+```typescript
+import { ethers } from 'ethers';
+import { createX402Client } from 'push-x402';
+
+// Connect to user's wallet (MetaMask, etc.)
+const provider = new ethers.BrowserProvider(window.ethereum);
+const client = createX402Client({
+  baseURL: 'https://api.example.com',
+  walletProvider: provider, // User's wallet provider
+  onPaymentStatus: (status) => {
+    console.log('Payment:', status);
+  },
+});
+
+// User will be prompted to approve transaction in their wallet
+const response = await client.get('/protected/resource');
+```
+
+**Use Cases:**
+- ✅ Browser applications (React, Vue, etc.)
+- ✅ User-facing web apps
+- ✅ DApps and DeFi applications
+- ✅ When users want wallet control
+
+**Requirements:**
+- Install ethers: `npm install ethers`
+- User must have a wallet extension (MetaMask, etc.)
+
+#### Option 3: Public Endpoint (Server-Side Setup)
+
+Use the public facilitator endpoint with your own server-side private key setup.
+
+```typescript
+// No private key or wallet provider needed
+// Your server must have BUYER_PRIVATE_KEY environment variable set
+const client = createX402Client({
+  baseURL: 'https://api.example.com',
+});
+
+const response = await client.get('/protected/resource');
+```
+
+**Use Cases:**
+- ✅ When you've set up your own payment processor
+- ✅ Server-side with environment variables
+- ✅ Shared payment infrastructure
 
 ### Payment Status Callback
 

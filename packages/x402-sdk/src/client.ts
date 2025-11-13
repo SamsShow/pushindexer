@@ -1,6 +1,18 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
 import type { PaymentRequirements, PaymentProof, PaymentProcessorResponse, X402ClientConfig } from './types';
 
+// Dynamic import for ethers (peer dependency)
+// Users must install ethers if using walletProvider
+let ethers: any;
+try {
+  // Try CommonJS require first
+  if (typeof require !== 'undefined') {
+    ethers = require('ethers');
+  }
+} catch {
+  // ethers not available - will throw error if walletProvider is used
+}
+
 /**
  * Validates payment requirements from a 402 response
  */
@@ -65,6 +77,8 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
     baseURL,
     axiosConfig = {},
     onPaymentStatus,
+    privateKey,
+    walletProvider,
   } = config;
 
   // Create axios instance
@@ -117,7 +131,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
         }
 
         try {
-          // Process payment via server-side endpoint
+          // Process payment
           if (onPaymentStatus) {
             onPaymentStatus('Processing payment on blockchain...');
           }
@@ -129,36 +143,129 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
             throw new Error('Missing recipient or amount in payment requirements');
           }
 
-          const paymentResponse = await axios.post<PaymentProcessorResponse>(
-            paymentEndpoint,
-            {
+          let paymentResult: PaymentProcessorResponse;
+
+          // Option 1: Use wallet provider (browser/client-side)
+          if (walletProvider) {
+            if (!ethers) {
+              throw new Error('ethers.js is required when using walletProvider. Please install: npm install ethers');
+            }
+
+            if (onPaymentStatus) {
+              onPaymentStatus('Waiting for wallet approval...');
+            }
+
+            // Sign transaction with wallet provider
+            const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
+            const facilitatorAbi = [
+              'function facilitateNativeTransfer(address recipient, uint256 amount) external payable',
+            ];
+
+            const signer = await walletProvider.getSigner();
+            const contract = new ethers.Contract(facilitatorContractAddress, facilitatorAbi, signer);
+            const amountWei = ethers.parseEther(amount.toString());
+
+            // Estimate gas
+            const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
+              recipient,
+              amountWei,
+              { value: amountWei }
+            );
+
+            // Send transaction (will prompt user for approval)
+            const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
+              value: amountWei,
+              gasLimit: gasEstimate,
+            });
+
+            if (onPaymentStatus) {
+              onPaymentStatus('Transaction sent, waiting for confirmation...');
+            }
+
+            // Wait for transaction
+            const receipt = await tx.wait();
+            const network = await walletProvider.getNetwork();
+
+            paymentResult = {
+              success: true,
+              txHash: tx.hash,
+              recipient,
+              amount: amount.toString(),
+              chainId: network.chainId.toString(),
+              blockNumber: receipt.blockNumber,
+            };
+          }
+          // Option 2: Use private key (agents/server-side)
+          else if (privateKey) {
+            const paymentPayload: any = {
               recipient,
               amount,
-            },
-            {
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              timeout: 60000, // 60 second timeout for blockchain transactions
+              privateKey,
+            };
+
+            const paymentResponse = await axios.post<PaymentProcessorResponse>(
+              paymentEndpoint,
+              paymentPayload,
+              {
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                timeout: 60000,
+              }
+            );
+
+            if (!paymentResponse.data) {
+              throw new Error('Payment processing failed: Empty response from payment endpoint');
             }
-          );
 
-          if (!paymentResponse.data) {
-            throw new Error('Payment processing failed: Empty response from payment endpoint');
+            if (!paymentResponse.data.success) {
+              const errorMsg = paymentResponse.data.txHash 
+                ? 'Payment processing failed: Transaction may have failed'
+                : 'Payment processing failed: No transaction hash received';
+              throw new Error(errorMsg);
+            }
+
+            if (!paymentResponse.data.txHash || typeof paymentResponse.data.txHash !== 'string') {
+              throw new Error('Payment processing failed: Invalid transaction hash received');
+            }
+
+            paymentResult = paymentResponse.data;
           }
+          // Option 3: Use public endpoint (requires server-side setup)
+          else {
+            const paymentPayload: any = {
+              recipient,
+              amount,
+            };
 
-          if (!paymentResponse.data.success) {
-            const errorMsg = paymentResponse.data.txHash 
-              ? 'Payment processing failed: Transaction may have failed'
-              : 'Payment processing failed: No transaction hash received';
-            throw new Error(errorMsg);
+            const paymentResponse = await axios.post<PaymentProcessorResponse>(
+              paymentEndpoint,
+              paymentPayload,
+              {
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                timeout: 60000,
+              }
+            );
+
+            if (!paymentResponse.data) {
+              throw new Error('Payment processing failed: Empty response from payment endpoint. Make sure you have BUYER_PRIVATE_KEY set up server-side or provide privateKey/walletProvider in SDK config.');
+            }
+
+            if (!paymentResponse.data.success) {
+              const errorMsg = paymentResponse.data.txHash 
+                ? 'Payment processing failed: Transaction may have failed'
+                : 'Payment processing failed: No transaction hash received';
+              throw new Error(errorMsg);
+            }
+
+            if (!paymentResponse.data.txHash || typeof paymentResponse.data.txHash !== 'string') {
+              throw new Error('Payment processing failed: Invalid transaction hash received');
+            }
+
+            paymentResult = paymentResponse.data;
           }
-
-          if (!paymentResponse.data.txHash || typeof paymentResponse.data.txHash !== 'string') {
-            throw new Error('Payment processing failed: Invalid transaction hash received');
-          }
-
-          const paymentResult = paymentResponse.data;
 
           // Create payment proof in x402 format
           const paymentProof: PaymentProof = {

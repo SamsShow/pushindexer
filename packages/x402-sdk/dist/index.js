@@ -1,5 +1,19 @@
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
+
 // src/client.ts
 import axios from "axios";
+var ethers;
+try {
+  if (typeof __require !== "undefined") {
+    ethers = __require("ethers");
+  }
+} catch {
+}
 function validatePaymentRequirements(requirements) {
   if (!requirements || typeof requirements !== "object") {
     throw new Error("Invalid payment requirements: response data is not an object");
@@ -24,7 +38,9 @@ function createX402Client(config = {}) {
     chainId = DEFAULT_CHAIN_ID,
     baseURL,
     axiosConfig = {},
-    onPaymentStatus
+    onPaymentStatus,
+    privateKey,
+    walletProvider
   } = config;
   const axiosInstance = axios.create({
     baseURL,
@@ -73,31 +89,97 @@ function createX402Client(config = {}) {
           if (!recipient || !amount) {
             throw new Error("Missing recipient or amount in payment requirements");
           }
-          const paymentResponse = await axios.post(
-            paymentEndpoint,
-            {
+          let paymentResult;
+          if (walletProvider) {
+            if (!ethers) {
+              throw new Error("ethers.js is required when using walletProvider. Please install: npm install ethers");
+            }
+            if (onPaymentStatus) {
+              onPaymentStatus("Waiting for wallet approval...");
+            }
+            const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
+            const facilitatorAbi = [
+              "function facilitateNativeTransfer(address recipient, uint256 amount) external payable"
+            ];
+            const signer = await walletProvider.getSigner();
+            const contract = new ethers.Contract(facilitatorContractAddress, facilitatorAbi, signer);
+            const amountWei = ethers.parseEther(amount.toString());
+            const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
+              recipient,
+              amountWei,
+              { value: amountWei }
+            );
+            const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
+              value: amountWei,
+              gasLimit: gasEstimate
+            });
+            if (onPaymentStatus) {
+              onPaymentStatus("Transaction sent, waiting for confirmation...");
+            }
+            const receipt = await tx.wait();
+            const network = await walletProvider.getNetwork();
+            paymentResult = {
+              success: true,
+              txHash: tx.hash,
+              recipient,
+              amount: amount.toString(),
+              chainId: network.chainId.toString(),
+              blockNumber: receipt.blockNumber
+            };
+          } else if (privateKey) {
+            const paymentPayload = {
+              recipient,
+              amount,
+              privateKey
+            };
+            const paymentResponse = await axios.post(
+              paymentEndpoint,
+              paymentPayload,
+              {
+                headers: {
+                  "Content-Type": "application/json"
+                },
+                timeout: 6e4
+              }
+            );
+            if (!paymentResponse.data) {
+              throw new Error("Payment processing failed: Empty response from payment endpoint");
+            }
+            if (!paymentResponse.data.success) {
+              const errorMsg = paymentResponse.data.txHash ? "Payment processing failed: Transaction may have failed" : "Payment processing failed: No transaction hash received";
+              throw new Error(errorMsg);
+            }
+            if (!paymentResponse.data.txHash || typeof paymentResponse.data.txHash !== "string") {
+              throw new Error("Payment processing failed: Invalid transaction hash received");
+            }
+            paymentResult = paymentResponse.data;
+          } else {
+            const paymentPayload = {
               recipient,
               amount
-            },
-            {
-              headers: {
-                "Content-Type": "application/json"
-              },
-              timeout: 6e4
-              // 60 second timeout for blockchain transactions
+            };
+            const paymentResponse = await axios.post(
+              paymentEndpoint,
+              paymentPayload,
+              {
+                headers: {
+                  "Content-Type": "application/json"
+                },
+                timeout: 6e4
+              }
+            );
+            if (!paymentResponse.data) {
+              throw new Error("Payment processing failed: Empty response from payment endpoint. Make sure you have BUYER_PRIVATE_KEY set up server-side or provide privateKey/walletProvider in SDK config.");
             }
-          );
-          if (!paymentResponse.data) {
-            throw new Error("Payment processing failed: Empty response from payment endpoint");
+            if (!paymentResponse.data.success) {
+              const errorMsg = paymentResponse.data.txHash ? "Payment processing failed: Transaction may have failed" : "Payment processing failed: No transaction hash received";
+              throw new Error(errorMsg);
+            }
+            if (!paymentResponse.data.txHash || typeof paymentResponse.data.txHash !== "string") {
+              throw new Error("Payment processing failed: Invalid transaction hash received");
+            }
+            paymentResult = paymentResponse.data;
           }
-          if (!paymentResponse.data.success) {
-            const errorMsg = paymentResponse.data.txHash ? "Payment processing failed: Transaction may have failed" : "Payment processing failed: No transaction hash received";
-            throw new Error(errorMsg);
-          }
-          if (!paymentResponse.data.txHash || typeof paymentResponse.data.txHash !== "string") {
-            throw new Error("Payment processing failed: Invalid transaction hash received");
-          }
-          const paymentResult = paymentResponse.data;
           const paymentProof = {
             scheme: paymentRequirements.scheme || "exact",
             amount: String(paymentRequirements.maxAmountRequired || paymentRequirements.amount || "0"),

@@ -32,7 +32,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   });
 
   try {
-    const { recipient, amount } = req.body;
+    const { recipient, amount, privateKey: requestPrivateKey } = req.body;
 
     if (!recipient || !amount) {
       console.error('Missing recipient or amount', { recipient, amount });
@@ -46,8 +46,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const rpcUrl = process.env.PUSH_CHAIN_RPC_URL;
     const contractAddress = process.env.FACILITATOR_CONTRACT_ADDRESS;
-    // Use buyer's private key if available, otherwise fall back to PRIVATE_KEY
-    const privateKey = process.env.BUYER_PRIVATE_KEY || process.env.PRIVATE_KEY;
+    // Use private key from request (buyer's key) if provided, otherwise fall back to env vars
+    const privateKey = requestPrivateKey || process.env.BUYER_PRIVATE_KEY || process.env.PRIVATE_KEY;
 
     if (!rpcUrl || !contractAddress || !privateKey) {
       console.error('Missing environment variables', {

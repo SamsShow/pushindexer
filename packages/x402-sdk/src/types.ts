@@ -71,6 +71,30 @@ export interface X402ClientConfig {
    * Default: 42101 (Push Chain testnet)
    */
   chainId?: number | string;
+  
+  /**
+   * Optional: Buyer's private key for seamless transactions (agents/server-side)
+   * ⚠️ WARNING: Only use this in secure environments (server-side).
+   * Never expose private keys in client-side code or public repositories.
+   * If provided, transactions will be signed automatically without manual approval.
+   * Use this for automated agents and server-side applications.
+   */
+  privateKey?: string;
+  
+  /**
+   * Optional: Wallet provider for browser/client-side transactions
+   * Accepts ethers.js providers (e.g., window.ethereum from MetaMask)
+   * If provided, transactions will prompt user for approval in their wallet.
+   * Use this for browser applications where users have wallet extensions.
+   * 
+   * @example
+   * ```typescript
+   * // Browser with MetaMask
+   * const provider = new ethers.BrowserProvider(window.ethereum);
+   * const client = createX402Client({ walletProvider: provider });
+   * ```
+   */
+  walletProvider?: any; // ethers.Provider type
 }
 
 /**
