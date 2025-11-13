@@ -195,11 +195,15 @@ export default function Demo() {
         }
       }
       
-      // Set txHash and fetch indexed data if we found it
+      // Set txHash (skip indexer fetching for now)
       if (extractedTxHash) {
         console.log('Extracted transaction hash:', extractedTxHash);
         setTxHash(extractedTxHash);
-        fetchIndexedData(extractedTxHash, 0);
+        // Skip indexer API call - set unavailable message
+        setIndexedData({ 
+          error: 'Indexer temporarily unavailable',
+          message: 'Database configuration required'
+        });
       } else {
         console.warn('Could not extract transaction hash from payment response');
       }
@@ -351,49 +355,27 @@ export default function Demo() {
               {txHash && txHash !== '-' && (
                 <div style={styles.indexedSection}>
                   <h3 style={styles.indexedTitle}>📊 Indexed Transaction Data</h3>
-                  {indexerLoading && !showIndexedData && !indexedData?.error && (
-                    <div style={styles.loadingBox}>
-                      <div style={{ color: '#6b7280', marginBottom: '12px', fontSize: '16px', fontWeight: '500' }}>
-                        ⏳ Waiting for indexer to process transaction...
-                      </div>
-                      <div style={styles.txHashDisplay}>{txHash}</div>
-                      <div style={styles.queryInfo}>Querying: {INDEXER_API}/tx?hash={txHash}</div>
-                      <div style={{ color: '#6b7280', fontSize: '11px', marginTop: '8px', fontStyle: 'italic' }}>
-                        This may take a few seconds while the indexer processes the transaction
-                      </div>
+                  <div style={styles.loadingBox}>
+                    <div style={{ color: '#f59e0b', marginBottom: '12px', fontSize: '14px', fontWeight: '500' }}>
+                      ⚠️ Indexer Temporarily Unavailable
                     </div>
-                  )}
-                  {indexedData?.error && (
-                    <div style={styles.loadingBox}>
-                      <div style={{ color: '#ef4444', marginBottom: '12px', fontSize: '14px', fontWeight: '500' }}>
-                        ⚠️ Indexer Temporarily Unavailable
-                      </div>
-                      <div style={{ color: '#6b7280', fontSize: '12px', marginBottom: '12px' }}>
-                        The indexer API requires database configuration. Please check VERCEL_SETUP.md for deployment instructions.
-                      </div>
-                      <div style={styles.txHashDisplay}>
-                        Transaction Hash: {txHash}
-                      </div>
-                      <div style={{ marginTop: '12px' }}>
-                        <a
-                          href={`https://donut.push.network/tx/${txHash}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{...styles.explorerLink, color: '#3b82f6', textDecoration: 'underline'}}
-                        >
-                          View on Block Explorer →
-                        </a>
-                      </div>
-                      {indexedData.details && (
-                        <details style={{ marginTop: '12px', fontSize: '11px', color: '#9ca3af' }}>
-                          <summary style={{ cursor: 'pointer', fontWeight: '500' }}>Technical Details</summary>
-                          <div style={{ marginTop: '8px', fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                            {indexedData.error}: {indexedData.details}
-                          </div>
-                        </details>
-                      )}
+                    <div style={{ color: '#6b7280', fontSize: '13px', marginBottom: '16px' }}>
+                      The indexer requires database configuration. Transaction was successful!
                     </div>
-                  )}
+                    <div style={styles.txHashDisplay}>
+                      {txHash}
+                    </div>
+                    <div style={{ marginTop: '16px' }}>
+                      <a
+                        href={`https://donut.push.network/tx/${txHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{...styles.explorerLink, color: '#3b82f6', textDecoration: 'underline', fontSize: '14px', fontWeight: '500'}}
+                      >
+                        View on Block Explorer →
+                      </a>
+                    </div>
+                  </div>
                   {showIndexedData && indexedData && indexedData.transaction && !indexedData.error && (
                     <div style={styles.indexedDataBox}>
                       <div style={styles.indexedHeader}>
