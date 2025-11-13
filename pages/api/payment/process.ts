@@ -22,6 +22,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // Log to verify this route is being hit
   console.log('✅ NEXT.JS PAYMENT PROCESS ENDPOINT CALLED', {
     method: req.method,
+    url: req.url,
     body: req.body,
     hasRpcUrl: !!process.env.PUSH_CHAIN_RPC_URL,
     hasContractAddress: !!process.env.FACILITATOR_CONTRACT_ADDRESS,
@@ -34,10 +35,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { recipient, amount } = req.body;
 
     if (!recipient || !amount) {
+      console.error('Missing recipient or amount', { recipient, amount });
       return res.status(400).json({ error: "recipient and amount are required" });
     }
 
     if (!/^0x[a-fA-F0-9]{40}$/.test(recipient)) {
+      console.error('Invalid recipient address', { recipient });
       return res.status(400).json({ error: "Invalid recipient address" });
     }
 
@@ -47,8 +50,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const privateKey = process.env.BUYER_PRIVATE_KEY || process.env.PRIVATE_KEY;
 
     if (!rpcUrl || !contractAddress || !privateKey) {
+      console.error('Missing environment variables', {
+        hasRpcUrl: !!rpcUrl,
+        hasContractAddress: !!contractAddress,
+        hasPrivateKey: !!privateKey,
+      });
       return res.status(500).json({ 
-        error: "Server configuration error: Missing RPC URL, contract address, or private key" 
+        error: "Server configuration error: Missing RPC URL, contract address, or private key",
+        details: {
+          hasRpcUrl: !!rpcUrl,
+          hasContractAddress: !!contractAddress,
+          hasPrivateKey: !!privateKey,
+        }
       });
     }
 
@@ -87,6 +100,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     if (!transactionHash) {
       console.error('No transaction hash found in tx or receipt!', { tx, receipt });
+      return res.status(500).json({
+        error: "Transaction failed",
+        message: "Could not retrieve transaction hash",
+      });
     }
 
     return res.status(200).json({

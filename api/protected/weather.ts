@@ -1,11 +1,21 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Log to identify if this handler is being called incorrectly
+  console.log('🔴 PROTECTED WEATHER HANDLER CALLED', {
+    method: req.method,
+    url: req.url,
+    path: req.url,
+    query: req.query,
+    timestamp: new Date().toISOString(),
+  });
+
   // Check for payment header
   const paymentHeader = req.headers["x-payment"];
 
   if (!paymentHeader) {
     // Return 402 Payment Required with payment specification
+    console.log('⚠️ Returning 402 - no payment header');
     return res.status(402).json({
       scheme: "exact",
       amount: "0.001",
@@ -14,6 +24,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       facilitator: process.env.FACILITATOR_CONTRACT_ADDRESS || "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7",
       network: "push",
       chainId: process.env.PUSH_CHAIN_ID || "42101",
+      _handler: 'api/protected/weather.ts', // Debug identifier
     });
   }
 
