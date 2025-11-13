@@ -1,18 +1,38 @@
-import { getDbPool } from "../../src/db/client.js";
-import { config } from "../../src/config/index.js";
+import pg from "pg";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+
+const { Pool } = pg;
+
+function getDbPool(): pg.Pool {
+  const DATABASE_URL = process.env.DATABASE_URL;
+  if (!DATABASE_URL) {
+    throw new Error("DATABASE_URL environment variable is not set");
+  }
+  const connectionConfig: pg.PoolConfig = {
+    connectionString: DATABASE_URL,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
+  };
+  if (DATABASE_URL.includes("neon.tech")) {
+    connectionConfig.ssl = { rejectUnauthorized: false };
+  }
+  return new Pool(connectionConfig);
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  const chainId = parseInt(process.env.PUSH_CHAIN_ID || "42101");
+
   try {
     const pool = getDbPool();
 
     const totalTxsResult = await pool.query(
       `SELECT COUNT(*) as count FROM facilitated_tx WHERE chain_id = $1`,
-      [config.pushChain.chainId]
+      [chainId]
     );
     const totalTxs = parseInt(totalTxsResult.rows[0].count);
 
@@ -20,7 +40,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       `SELECT COALESCE(SUM(value::numeric), 0) as volume 
        FROM facilitated_tx 
        WHERE chain_id = $1 AND status = 'confirmed'`,
-      [config.pushChain.chainId]
+      [chainId]
     );
     const totalVolume = volumeResult.rows[0].volume;
 
@@ -28,7 +48,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       `SELECT COUNT(DISTINCT sender) as count 
        FROM facilitated_tx 
        WHERE chain_id = $1`,
-      [config.pushChain.chainId]
+      [chainId]
     );
     const activeUsers = parseInt(activeUsersResult.rows[0].count);
 
@@ -37,7 +57,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
        FROM facilitated_tx 
        WHERE chain_id = $1 
        GROUP BY tx_type`,
-      [config.pushChain.chainId]
+      [chainId]
     );
     const txByType = txTypeResult.rows.reduce((acc: any, row: any) => {
       const typeName =
@@ -51,7 +71,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
        FROM facilitated_tx 
        WHERE chain_id = $1 
        GROUP BY status`,
-      [config.pushChain.chainId]
+      [chainId]
     );
     const txByStatus = statusResult.rows.reduce((acc: any, row: any) => {
       acc[row.status] = parseInt(row.count);
@@ -62,12 +82,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       `SELECT MAX(block_number) as block_number 
        FROM facilitated_tx 
        WHERE chain_id = $1`,
-      [config.pushChain.chainId]
+      [chainId]
     );
     const latestBlock = latestBlockResult.rows[0]?.block_number || 0;
 
     return res.status(200).json({
-      chainId: config.pushChain.chainId,
+      chainId: chainId,
       totalTransactions: totalTxs,
       totalVolume: totalVolume.toString(),
       activeUsers,

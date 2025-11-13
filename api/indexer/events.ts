@@ -1,5 +1,24 @@
-import { getDbPool } from "../../src/db/client.js";
+import pg from "pg";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+
+const { Pool } = pg;
+
+function getDbPool(): pg.Pool {
+  const DATABASE_URL = process.env.DATABASE_URL;
+  if (!DATABASE_URL) {
+    throw new Error("DATABASE_URL environment variable is not set");
+  }
+  const connectionConfig: pg.PoolConfig = {
+    connectionString: DATABASE_URL,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
+  };
+  if (DATABASE_URL.includes("neon.tech")) {
+    connectionConfig.ssl = { rejectUnauthorized: false };
+  }
+  return new Pool(connectionConfig);
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {

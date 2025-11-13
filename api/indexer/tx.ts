@@ -1,5 +1,32 @@
-import { getDbPool } from "../../src/db/client.js";
+import pg from "pg";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+
+const { Pool } = pg;
+
+// Create database pool
+function getDbPool(): pg.Pool {
+  const DATABASE_URL = process.env.DATABASE_URL;
+  
+  if (!DATABASE_URL) {
+    throw new Error("DATABASE_URL environment variable is not set");
+  }
+
+  const connectionConfig: pg.PoolConfig = {
+    connectionString: DATABASE_URL,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
+  };
+
+  // Neon requires SSL
+  if (DATABASE_URL.includes("neon.tech")) {
+    connectionConfig.ssl = {
+      rejectUnauthorized: false,
+    };
+  }
+
+  return new Pool(connectionConfig);
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Enable CORS - must be set before any response
@@ -16,6 +43,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  let pool: pg.Pool | null = null;
+
   try {
     const { hash } = req.query;
 
@@ -23,7 +52,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: "Invalid transaction hash" });
     }
 
-    const pool = getDbPool();
+    pool = getDbPool();
 
     const result = await pool.query(
       `SELECT * FROM facilitated_tx WHERE tx_hash = $1`,
@@ -69,7 +98,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   } catch (error: any) {
     console.error("Error fetching transaction:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    
+    // Provide more helpful error messages
+    if (error.message?.includes("DATABASE_URL")) {
+      return res.status(503).json({ 
+        error: "Database not configured",
+        message: "DATABASE_URL environment variable is not set. Please configure it in Vercel environment variables."
+      });
+    }
+    
+    if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
+      return res.status(503).json({ 
+        error: "Database connection failed",
+        message: "Could not connect to the database. Please check your DATABASE_URL configuration."
+      });
+    }
+    
+    return res.status(500).json({ 
+      error: "Internal server error",
+      message: error.message || "Unknown error"
+    });
+  } finally {
+    // Close the pool connection
+    if (pool) {
+      await pool.end().catch(console.error);
+    }
   }
 }
 
