@@ -138,42 +138,54 @@ export default function Home() {
     
     setIndexerLoading(true)
     
-    // Use local API (same origin, no CORS issues)
-    const indexerUrl = `${API_BASE}/api/indexer/tx?hash=${txHash}`
-    
-    try {
-      const response = await fetch(indexerUrl, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      })
-      
+    // Try public API first, fallback to local
+    const tryFetch = async (url: string) => {
+      try {
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+          },
+        })
+        
       if (response.ok) {
         const data = await response.json()
         setIndexedData(data)
         setShowIndexedData(true)
-        setIndexerLoading(false)
-        return
-      } else if (response.status === 404) {
-        // Transaction not indexed yet, retry after delay
-        setIndexerLoading(true)
-        setTimeout(() => fetchIndexedData(txHash), 3000)
-        return
+          setIndexerLoading(false)
+          return true
+        } else if (response.status === 404) {
+          // Transaction not indexed yet
+          return false
       } else {
-        const errorText = await response.text()
-        console.error('Error fetching indexed data:', response.status, errorText)
-        setIndexerLoading(false)
-        // Still retry in case it's a temporary error
-        setTimeout(() => fetchIndexedData(txHash), 3000)
-        return
+          // Other error
+          return false
+        }
+      } catch (error) {
+        // CORS or network error
+        return false
       }
-    } catch (error) {
-      console.error('Error fetching from indexer API:', error)
-      setIndexerLoading(false)
-      // Retry after delay
-      setTimeout(() => fetchIndexedData(txHash), 3000)
     }
+    
+    // Try public API first
+    const publicUrl = `${INDEXER_API}/tx?hash=${txHash}`
+    const publicSuccess = await tryFetch(publicUrl)
+    
+    if (publicSuccess) {
+      return // Success with public API
+    }
+    
+    // Fallback to local API
+    const localUrl = `${API_BASE}/api/indexer/tx?hash=${txHash}`
+    const localSuccess = await tryFetch(localUrl)
+    
+    if (localSuccess) {
+      return // Success with local API
+    }
+    
+    // If both failed, transaction might not be indexed yet - retry
+    setIndexerLoading(true)
+    setTimeout(() => fetchIndexedData(txHash), 3000)
   }
 
   const testPayment = async () => {
