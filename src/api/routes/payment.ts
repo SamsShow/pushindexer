@@ -86,11 +86,21 @@ export async function paymentRoutes(fastify: FastifyInstance) {
           const data = iface.encodeFunctionData("facilitateNativeTransfer", [recipient, amountWei]);
 
           // Send transaction using Universal Signer
-          const txResult = await universalSigner.signAndSendTransaction({
-            to: contractAddress,
-            value: amountWei.toString(),
-            data: data,
-          });
+          // Universal Signer wraps ethers signers - use sendTransaction method
+          // Universal Signer's signAndSendTransaction expects Uint8Array (RLP bytes),
+          // but when wrapping ethers signers, sendTransaction accepts transaction objects
+          let txResult;
+          if (universalSigner.sendTransaction) {
+            // Use sendTransaction which accepts ethers transaction objects
+            txResult = await universalSigner.sendTransaction({
+              to: contractAddress,
+              value: amountWei,
+              data: data,
+            });
+          } else {
+            // Fallback to ethers.js if sendTransaction not available
+            throw new Error('Universal Signer does not expose sendTransaction');
+          }
 
           const txHash = typeof txResult === 'string' ? txResult : txResult.hash || txResult.txHash;
           const accountChainId = universalSigner.account?.chain || chainId || config.pushChain.chainId;
@@ -137,7 +147,7 @@ export async function paymentRoutes(fastify: FastifyInstance) {
 
       logger.info(`Payment transaction sent: ${tx.hash}`);
 
-      // Wait for transaction to be mined for demo purposes
+      // Wait for transaction to be mined
       const receipt = await tx.wait();
       logger.info(`Transaction confirmed in block: ${receipt.blockNumber}`);
 

@@ -1,6 +1,6 @@
 {
   "name": "push-x402",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "Drop-in axios replacement that automatically handles HTTP 402 Payment Required responses with blockchain payments on Push Chain",
   "main": "dist/index.cjs",
   "module": "dist/index.js",

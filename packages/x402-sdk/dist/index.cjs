@@ -177,23 +177,20 @@ function createX402Client(config = {}) {
           }
           const chainInfo = detectChainInfo(paymentRequirements, config);
           let paymentResult;
-          if (providedUniversalSigner || PushChain && (walletProvider || privateKey)) {
-            if (!PushChain) {
-              throw new Error("@pushchain/core is required for Universal Signer. Please install: npm install @pushchain/core");
-            }
+          if (providedUniversalSigner || PushChain && PushChain.utils && PushChain.utils.signer && (walletProvider || privateKey)) {
             try {
               if (onPaymentStatus) {
                 onPaymentStatus("Using Universal Signer for multi-chain transaction...");
               }
               let universalSigner = providedUniversalSigner;
-              if (!universalSigner && walletProvider && ethers) {
+              if (!universalSigner && walletProvider && ethers && PushChain && PushChain.utils && PushChain.utils.signer) {
                 if (onPaymentStatus) {
                   onPaymentStatus("Creating Universal Signer from wallet provider...");
                 }
                 const chainSigner = await walletProvider.getSigner();
                 universalSigner = await PushChain.utils.signer.toUniversal(chainSigner);
               }
-              if (!universalSigner && privateKey && ethers) {
+              if (!universalSigner && privateKey && ethers && PushChain && PushChain.utils && PushChain.utils.signer) {
                 if (onPaymentStatus) {
                   onPaymentStatus("Creating Universal Signer from private key...");
                 }
@@ -211,29 +208,92 @@ function createX402Client(config = {}) {
               ];
               const iface = ethers ? new ethers.Interface(facilitatorAbi) : null;
               const data = iface ? iface.encodeFunctionData("facilitateNativeTransfer", [recipient, amountWei]) : "0x";
-              const txResult = await universalSigner.signAndSendTransaction({
-                to: facilitatorContractAddress,
-                value: amountWei.toString(),
-                data
-              });
+              let txResult;
+              if (typeof universalSigner.sendTransaction === "function") {
+                const txRequest = {
+                  to: facilitatorContractAddress,
+                  value: amountWei,
+                  data
+                };
+                txResult = await universalSigner.sendTransaction(txRequest);
+              } else if (walletProvider && ethers) {
+                if (onPaymentStatus) {
+                  onPaymentStatus("Universal Signer: Using underlying wallet provider for transaction...");
+                }
+                const signer = await walletProvider.getSigner();
+                const contract = new ethers.Contract(facilitatorContractAddress, facilitatorAbi, signer);
+                const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
+                  recipient,
+                  amountWei,
+                  { value: amountWei }
+                );
+                const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
+                  value: amountWei,
+                  gasLimit: gasEstimate
+                });
+                const receipt = await tx.wait();
+                const network = await walletProvider.getNetwork();
+                txResult = {
+                  hash: tx.hash,
+                  chainId: typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString(),
+                  blockNumber: receipt.blockNumber
+                };
+              } else if (privateKey && ethers) {
+                if (onPaymentStatus) {
+                  onPaymentStatus("Using private key with Universal Signer chain detection...");
+                }
+                const provider = new ethers.JsonRpcProvider(chainInfo.rpcUrl);
+                const ethersSigner = new ethers.Wallet(privateKey, provider);
+                const contract = new ethers.Contract(facilitatorContractAddress, facilitatorAbi, ethersSigner);
+                const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
+                  recipient,
+                  amountWei,
+                  { value: amountWei }
+                );
+                const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
+                  value: amountWei,
+                  gasLimit: gasEstimate
+                });
+                const receipt = await tx.wait();
+                const network = await provider.getNetwork();
+                txResult = {
+                  hash: tx.hash,
+                  chainId: typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString(),
+                  blockNumber: receipt.blockNumber
+                };
+              } else {
+                throw new Error("Cannot use Universal Signer without walletProvider or privateKey");
+              }
               if (onPaymentStatus) {
                 onPaymentStatus("Transaction sent, waiting for confirmation...");
               }
-              const txHash = typeof txResult === "string" ? txResult : txResult.hash || txResult.txHash;
+              const txHash = typeof txResult === "string" ? txResult : txResult?.hash || txResult?.txHash || String(txResult);
+              if (!txHash || txHash === "[object Object]") {
+                throw new Error("Invalid transaction result from Universal Signer");
+              }
               const accountChainId = universalSigner.account?.chain || chainInfo.chainId;
               const resolvedChainId = typeof accountChainId === "string" ? accountChainId.split(":")[1] || accountChainId : accountChainId;
               paymentResult = {
                 success: true,
-                txHash,
+                txHash: String(txHash),
                 recipient,
                 amount: amount.toString(),
                 chainId: String(resolvedChainId || chainInfo.chainId)
               };
             } catch (universalError) {
-              console.warn("Universal Signer failed, falling back to ethers.js:", universalError);
-              if (onPaymentStatus) {
-                onPaymentStatus("Universal Signer failed, using ethers.js fallback...");
+              const isBytesLikeError = universalError.message?.includes("invalid BytesLike value") || universalError.code === "INVALID_ARGUMENT";
+              if (isBytesLikeError) {
+                console.warn("Universal Signer incompatible with current ethers.js version. Skipping Universal Signer.");
+                if (onPaymentStatus) {
+                  onPaymentStatus("Universal Signer incompatible. Using ethers.js fallback...");
+                }
+              } else {
+                console.warn("Universal Signer failed, falling back to ethers.js:", universalError);
+                if (onPaymentStatus) {
+                  onPaymentStatus(`Universal Signer failed: ${universalError.message}. Using fallback...`);
+                }
               }
+              paymentResult = void 0;
             }
           }
           if (!paymentResult && walletProvider) {
@@ -274,19 +334,21 @@ function createX402Client(config = {}) {
             };
           }
           if (!paymentResult && privateKey) {
+            const endpointUrl = baseURL ? `${baseURL}/api/payment/process` : paymentEndpoint;
             const paymentPayload = {
               recipient,
               amount,
               privateKey
             };
             const paymentResponse = await import_axios.default.post(
-              paymentEndpoint,
+              endpointUrl,
               paymentPayload,
               {
                 headers: {
                   "Content-Type": "application/json"
                 },
-                timeout: 6e4
+                timeout: 6e4,
+                withCredentials: false
               }
             );
             if (!paymentResponse.data) {
@@ -302,6 +364,7 @@ function createX402Client(config = {}) {
             paymentResult = paymentResponse.data;
           }
           if (!paymentResult) {
+            const endpointUrl = baseURL ? `${baseURL}/api/payment/process` : paymentEndpoint;
             const paymentPayload = {
               recipient,
               amount,
@@ -309,13 +372,15 @@ function createX402Client(config = {}) {
               rpcUrl: chainInfo.rpcUrl
             };
             const paymentResponse = await import_axios.default.post(
-              paymentEndpoint,
+              endpointUrl,
               paymentPayload,
               {
                 headers: {
                   "Content-Type": "application/json"
                 },
-                timeout: 6e4
+                timeout: 6e4,
+                // Add withCredentials if needed for CORS
+                withCredentials: false
               }
             );
             if (!paymentResponse.data) {
