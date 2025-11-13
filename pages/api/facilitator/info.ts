@@ -24,6 +24,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const rpcUrl = process.env.PUSH_CHAIN_RPC_URL;
     const contractAddress = process.env.FACILITATOR_CONTRACT_ADDRESS;
+    const chainId = process.env.PUSH_CHAIN_ID || "42101";
 
     if (!rpcUrl || !contractAddress) {
       return res.status(500).json({ 
@@ -32,21 +33,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
+    // Create provider
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     const contract = new ethers.Contract(contractAddress, FACILITATOR_ABI, provider);
-    const network = await provider.getNetwork();
 
-    const [owner, totalFacilitated] = await Promise.all([
-      contract.owner(),
-      contract.totalFacilitated(),
-    ]);
+    // Try to fetch data with fallbacks
+    let network: any;
+    let owner: string = "0x0000000000000000000000000000000000000000";
+    let totalFacilitated: bigint = BigInt(0);
+
+    try {
+      network = await provider.getNetwork();
+    } catch (error) {
+      console.warn("Failed to get network, using chainId from env:", error);
+      network = { chainId: BigInt(chainId), name: "unknown" };
+    }
+
+    try {
+      owner = await contract.owner();
+    } catch (error) {
+      console.warn("Failed to get owner:", error);
+    }
+
+    try {
+      totalFacilitated = await contract.totalFacilitated();
+    } catch (error) {
+      console.warn("Failed to get totalFacilitated:", error);
+    }
 
     return res.status(200).json({
       contractAddress,
-      chainId: network.chainId.toString(),
-      owner,
-      totalFacilitated: ethers.formatEther(totalFacilitated),
-      network: network.name,
+      chainId: network.chainId?.toString() || chainId,
+      owner: owner || "0x0000000000000000000000000000000000000000",
+      totalFacilitated: ethers.formatEther(totalFacilitated || BigInt(0)),
+      network: network.name || "unknown",
     });
   } catch (error: any) {
     console.error("Error fetching contract info:", error);
