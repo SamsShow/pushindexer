@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { createX402Client } from '@pushchain/x402-sdk';
 
-const FACILITATOR_API = 'https://pushindexer.vercel.app/api/facilitator';
+// Use relative path for facilitator API
 
 export default function Demo() {
   const [status, setStatus] = useState<{ type: string; text: string }>({ type: 'pending', text: 'Ready to Test' });
@@ -24,6 +24,7 @@ export default function Demo() {
   const API_BASE = typeof window !== 'undefined' ? window.location.origin : '';
   const PROTECTED_ENDPOINT = `${API_BASE}/api/demo/protected`;
   const INDEXER_API = `${API_BASE}/api/indexer`;
+  const FACILITATOR_API = `${API_BASE}/api/facilitator`;
 
   // Initialize facilitator info
   useEffect(() => {
