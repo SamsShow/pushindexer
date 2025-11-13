@@ -140,7 +140,7 @@ export default function Home() {
     
     // Try public API first, fallback to local
     const tryFetch = async (url: string) => {
-      try {
+    try {
         const response = await fetch(url, {
           method: 'GET',
           headers: {
@@ -185,7 +185,7 @@ export default function Home() {
     
     // If both failed, transaction might not be indexed yet - retry
     setIndexerLoading(true)
-    setTimeout(() => fetchIndexedData(txHash), 3000)
+      setTimeout(() => fetchIndexedData(txHash), 3000)
   }
 
   const testPayment = async () => {
