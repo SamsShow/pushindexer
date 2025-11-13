@@ -3,7 +3,6 @@ import Head from 'next/head';
 import { createX402Client } from '@pushchain/x402-sdk';
 
 const FACILITATOR_API = 'https://pushindexer.vercel.app/api/facilitator';
-const INDEXER_API = 'https://pushindexer.vercel.app/api/indexer';
 
 export default function Demo() {
   const [status, setStatus] = useState<{ type: string; text: string }>({ type: 'pending', text: 'Ready to Test' });
@@ -24,6 +23,7 @@ export default function Demo() {
 
   const API_BASE = typeof window !== 'undefined' ? window.location.origin : '';
   const PROTECTED_ENDPOINT = `${API_BASE}/api/demo/protected`;
+  const INDEXER_API = `${API_BASE}/api/indexer`;
 
   // Initialize facilitator info
   useEffect(() => {
@@ -64,12 +64,28 @@ export default function Demo() {
           setTimeout(() => fetchIndexedData(txHash, retryCount + 1), 3000);
         } else {
           setIndexerLoading(false);
-          setIndexedData({ error: 'Transaction not found in indexer' });
+          setIndexedData({ 
+            error: 'Transaction not found in indexer',
+            message: 'The transaction was successful, but it may not be indexed yet. The indexer processes transactions asynchronously.'
+          });
         }
         return;
-      } else {
+      } else if (response.status === 503) {
+        // Database not configured or connection failed
+        const errorData = await response.json().catch(() => ({}));
         setIndexerLoading(false);
-        setIndexedData({ error: `Indexer API error: ${response.status} ${response.statusText}` });
+        setIndexedData({ 
+          error: errorData.error || 'Indexer unavailable',
+          message: errorData.message || 'The indexer database is not configured. Please check your DATABASE_URL environment variable in Vercel.'
+        });
+        return;
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        setIndexerLoading(false);
+        setIndexedData({ 
+          error: `Indexer API error: ${response.status} ${response.statusText}`,
+          message: errorData.message || errorData.error || 'An error occurred while fetching indexed data'
+        });
       }
     } catch (error: any) {
       console.error('Error fetching indexed data:', error);
@@ -195,15 +211,12 @@ export default function Demo() {
         }
       }
       
-      // Set txHash (skip indexer fetching for now)
+      // Set txHash and fetch indexed data
       if (extractedTxHash) {
         console.log('Extracted transaction hash:', extractedTxHash);
         setTxHash(extractedTxHash);
-        // Skip indexer API call - set unavailable message
-        setIndexedData({ 
-          error: 'Indexer temporarily unavailable',
-          message: 'Database configuration required'
-        });
+        // Fetch indexed data from the indexer API
+        fetchIndexedData(extractedTxHash);
       } else {
         console.warn('Could not extract transaction hash from payment response');
       }
@@ -355,27 +368,36 @@ export default function Demo() {
               {txHash && txHash !== '-' && (
                 <div style={styles.indexedSection}>
                   <h3 style={styles.indexedTitle}>📊 Indexed Transaction Data</h3>
-                  <div style={styles.loadingBox}>
-                    <div style={{ color: '#f59e0b', marginBottom: '12px', fontSize: '14px', fontWeight: '500' }}>
-                      ⚠️ Indexer Temporarily Unavailable
+                  {indexerLoading && (
+                    <div style={styles.loadingBox}>
+                      <div style={{ color: '#6b7280', fontSize: '13px' }}>
+                        Loading indexed data...
+                      </div>
                     </div>
-                    <div style={{ color: '#6b7280', fontSize: '13px', marginBottom: '16px' }}>
-                      The indexer requires database configuration. Transaction was successful!
+                  )}
+                  {!indexerLoading && indexedData && indexedData.error && (
+                    <div style={styles.loadingBox}>
+                      <div style={{ color: '#f59e0b', marginBottom: '12px', fontSize: '14px', fontWeight: '500' }}>
+                        ⚠️ {indexedData.error}
+                      </div>
+                      <div style={{ color: '#6b7280', fontSize: '13px', marginBottom: '16px' }}>
+                        {indexedData.message || 'Transaction was successful, but not yet indexed. The indexer may need time to process the transaction.'}
+                      </div>
+                      <div style={styles.txHashDisplay}>
+                        {txHash}
+                      </div>
+                      <div style={{ marginTop: '16px' }}>
+                        <a
+                          href={`https://donut.push.network/tx/${txHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{...styles.explorerLink, color: '#3b82f6', textDecoration: 'underline', fontSize: '14px', fontWeight: '500'}}
+                        >
+                          View on Block Explorer →
+                        </a>
+                      </div>
                     </div>
-                    <div style={styles.txHashDisplay}>
-                      {txHash}
-                    </div>
-                    <div style={{ marginTop: '16px' }}>
-                      <a
-                        href={`https://donut.push.network/tx/${txHash}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{...styles.explorerLink, color: '#3b82f6', textDecoration: 'underline', fontSize: '14px', fontWeight: '500'}}
-                      >
-                        View on Block Explorer →
-                      </a>
-                    </div>
-                  </div>
+                  )}
                   {showIndexedData && indexedData && indexedData.transaction && !indexedData.error && (
                     <div style={styles.indexedDataBox}>
                       <div style={styles.indexedHeader}>
