@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
-import type { PaymentRequirements, PaymentProof, PaymentProcessorResponse, X402ClientConfig } from './types';
+import type { PaymentRequirements, PaymentProof, PaymentProcessorResponse, X402ClientConfig, ChainInfo } from './types';
 
 // Dynamic import for ethers (peer dependency)
 // Users must install ethers if using walletProvider
@@ -11,6 +11,17 @@ try {
   }
 } catch {
   // ethers not available - will throw error if walletProvider is used
+}
+
+// Dynamic import for Push Chain SDK (peer dependency)
+// Users must install @pushchain/core if using Universal Signer
+let PushChain: any;
+try {
+  if (typeof require !== 'undefined') {
+    PushChain = require('@pushchain/core');
+  }
+} catch {
+  // Push Chain SDK not available - will fallback to ethers.js
 }
 
 /**
@@ -41,6 +52,93 @@ function validatePaymentRequirements(requirements: any): PaymentRequirements {
 const DEFAULT_PAYMENT_ENDPOINT = 'https://pushindexer.vercel.app/api/payment/process';
 const DEFAULT_FACILITATOR_ADDRESS = '0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7';
 const DEFAULT_CHAIN_ID = 42101;
+const DEFAULT_PUSH_CHAIN_RPC = 'https://evm.rpc-testnet-donut-node1.push.org/';
+
+/**
+ * Detects chain information from payment requirements
+ * Priority: paymentRequirements.rpcUrl → paymentRequirements.chainId → config → default
+ */
+function detectChainInfo(
+  paymentRequirements: PaymentRequirements,
+  config: X402ClientConfig
+): ChainInfo {
+  // Priority 1: RPC URL directly from payment requirements
+  if (paymentRequirements.rpcUrl) {
+    return {
+      chainId: paymentRequirements.chainId || DEFAULT_CHAIN_ID,
+      rpcUrl: paymentRequirements.rpcUrl,
+      network: paymentRequirements.network,
+    };
+  }
+
+  // Priority 2: Chain ID from payment requirements + chainRpcMap
+  if (paymentRequirements.chainId && config.chainRpcMap) {
+    const chainIdStr = String(paymentRequirements.chainId);
+    const rpcUrl = config.chainRpcMap[chainIdStr] || config.chainRpcMap[paymentRequirements.chainId];
+    if (rpcUrl) {
+      return {
+        chainId: paymentRequirements.chainId,
+        rpcUrl,
+        network: paymentRequirements.network,
+      };
+    }
+  }
+
+  // Priority 3: Config pushChainRpcUrl
+  if (config.pushChainRpcUrl) {
+    return {
+      chainId: paymentRequirements.chainId || config.chainId || DEFAULT_CHAIN_ID,
+      rpcUrl: config.pushChainRpcUrl,
+      network: paymentRequirements.network,
+    };
+  }
+
+  // Priority 4: Chain ID from payment requirements (use default Push Chain RPC)
+  if (paymentRequirements.chainId) {
+    return {
+      chainId: paymentRequirements.chainId,
+      rpcUrl: DEFAULT_PUSH_CHAIN_RPC,
+      network: paymentRequirements.network,
+    };
+  }
+
+  // Priority 5: Config chainId
+  if (config.chainId) {
+    return {
+      chainId: config.chainId,
+      rpcUrl: DEFAULT_PUSH_CHAIN_RPC,
+      network: paymentRequirements.network,
+    };
+  }
+
+  // Default: Push Chain testnet
+  return {
+    chainId: DEFAULT_CHAIN_ID,
+    rpcUrl: DEFAULT_PUSH_CHAIN_RPC,
+    network: 'push',
+  };
+}
+
+/**
+ * Creates a Universal Signer from ethers signer if Push Chain SDK is available
+ */
+async function createUniversalSignerFromEthers(
+  ethersSigner: any,
+  rpcUrl: string
+): Promise<any | null> {
+  if (!PushChain || !PushChain.utils || !PushChain.utils.signer) {
+    return null;
+  }
+
+  try {
+    // Create Universal Signer from ethers signer
+    const universalSigner = await PushChain.utils.signer.toUniversal(ethersSigner);
+    return universalSigner;
+  } catch (error) {
+    console.warn('Failed to create Universal Signer, falling back to ethers.js:', error);
+    return null;
+  }
+}
 
 /**
  * Creates an axios instance with x402 payment interceptor
@@ -79,6 +177,9 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
     onPaymentStatus,
     privateKey,
     walletProvider,
+    universalSigner: providedUniversalSigner,
+    pushChainRpcUrl,
+    chainRpcMap,
   } = config;
 
   // Create axios instance
@@ -143,10 +244,103 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
             throw new Error('Missing recipient or amount in payment requirements');
           }
 
-          let paymentResult: PaymentProcessorResponse;
+          // Detect chain information from payment requirements
+          const chainInfo = detectChainInfo(paymentRequirements, config);
 
-          // Option 1: Use wallet provider (browser/client-side)
-          if (walletProvider) {
+          let paymentResult: PaymentProcessorResponse | undefined;
+
+          // Option 1: Use Universal Signer (multi-chain support, highest priority)
+          if (providedUniversalSigner || (PushChain && (walletProvider || privateKey))) {
+            if (!PushChain) {
+              throw new Error('@pushchain/core is required for Universal Signer. Please install: npm install @pushchain/core');
+            }
+
+            try {
+              if (onPaymentStatus) {
+                onPaymentStatus('Using Universal Signer for multi-chain transaction...');
+              }
+
+              let universalSigner = providedUniversalSigner;
+              
+              // Create Universal Signer from walletProvider if not provided
+              if (!universalSigner && walletProvider && ethers) {
+                if (onPaymentStatus) {
+                  onPaymentStatus('Creating Universal Signer from wallet provider...');
+                }
+                // Get signer from wallet provider
+                // Note: Universal Signer will use the provider's RPC, so we need to ensure
+                // the wallet provider is connected to the correct chain
+                const chainSigner = await walletProvider.getSigner();
+                universalSigner = await PushChain.utils.signer.toUniversal(chainSigner);
+              }
+              
+              // Create Universal Signer from privateKey if not provided
+              if (!universalSigner && privateKey && ethers) {
+                if (onPaymentStatus) {
+                  onPaymentStatus('Creating Universal Signer from private key...');
+                }
+                const provider = new ethers.JsonRpcProvider(chainInfo.rpcUrl);
+                const ethersSigner = new ethers.Wallet(privateKey, provider);
+                universalSigner = await PushChain.utils.signer.toUniversal(ethersSigner);
+              }
+
+              if (!universalSigner) {
+                throw new Error('Failed to create Universal Signer');
+              }
+
+              // Use Universal Signer's signAndSendTransaction for cross-chain support
+              const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
+              const amountWei = ethers ? ethers.parseEther(amount.toString()) : BigInt(Number(amount) * 1e18);
+
+              // Prepare transaction data
+              const facilitatorAbi = [
+                'function facilitateNativeTransfer(address recipient, uint256 amount) external payable',
+              ];
+              
+              // Encode function call
+              const iface = ethers ? new ethers.Interface(facilitatorAbi) : null;
+              const data = iface ? iface.encodeFunctionData('facilitateNativeTransfer', [recipient, amountWei]) : '0x';
+
+              // Send transaction using Universal Signer
+              const txResult = await universalSigner.signAndSendTransaction({
+                to: facilitatorContractAddress,
+                value: amountWei.toString(),
+                data: data,
+              });
+
+              if (onPaymentStatus) {
+                onPaymentStatus('Transaction sent, waiting for confirmation...');
+              }
+
+              // Wait for transaction confirmation
+              // Universal Signer returns transaction hash, we may need to wait for it
+              const txHash = typeof txResult === 'string' ? txResult : txResult.hash || txResult.txHash;
+
+              // Get network info from Universal Signer account
+              const accountChainId = universalSigner.account?.chain || chainInfo.chainId;
+              const resolvedChainId = typeof accountChainId === 'string' 
+                ? accountChainId.split(':')[1] || accountChainId 
+                : accountChainId;
+
+              paymentResult = {
+                success: true,
+                txHash,
+                recipient,
+                amount: amount.toString(),
+                chainId: String(resolvedChainId || chainInfo.chainId),
+              };
+            } catch (universalError: any) {
+              // Fallback to ethers.js if Universal Signer fails
+              console.warn('Universal Signer failed, falling back to ethers.js:', universalError);
+              if (onPaymentStatus) {
+                onPaymentStatus('Universal Signer failed, using ethers.js fallback...');
+              }
+              // Continue to ethers.js fallback below
+            }
+          }
+
+          // Option 2: Use wallet provider (browser/client-side) - fallback if Universal Signer not available
+          if (!paymentResult && walletProvider) {
             if (!ethers) {
               throw new Error('ethers.js is required when using walletProvider. Please install: npm install ethers');
             }
@@ -161,6 +355,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               'function facilitateNativeTransfer(address recipient, uint256 amount) external payable',
             ];
 
+            // Get signer from wallet provider
             const signer = await walletProvider.getSigner();
             const contract = new ethers.Contract(facilitatorContractAddress, facilitatorAbi, signer);
             const amountWei = ethers.parseEther(amount.toString());
@@ -191,12 +386,12 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               txHash: tx.hash,
               recipient,
               amount: amount.toString(),
-              chainId: network.chainId.toString(),
+              chainId: typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString(),
               blockNumber: receipt.blockNumber,
             };
           }
-          // Option 2: Use private key (agents/server-side)
-          else if (privateKey) {
+          // Option 3: Use private key (agents/server-side) - fallback if Universal Signer not available
+          if (!paymentResult && privateKey) {
             const paymentPayload: any = {
               recipient,
               amount,
@@ -231,11 +426,13 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
 
             paymentResult = paymentResponse.data;
           }
-          // Option 3: Use public endpoint (requires server-side setup)
-          else {
+          // Option 4: Use public endpoint (requires server-side setup)
+          if (!paymentResult) {
             const paymentPayload: any = {
               recipient,
               amount,
+              chainId: chainInfo.chainId,
+              rpcUrl: chainInfo.rpcUrl,
             };
 
             const paymentResponse = await axios.post<PaymentProcessorResponse>(
@@ -265,6 +462,11 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
             }
 
             paymentResult = paymentResponse.data;
+          }
+
+          // Ensure paymentResult is assigned
+          if (!paymentResult) {
+            throw new Error('Payment processing failed: No payment method available or all methods failed');
           }
 
           // Create payment proof in x402 format

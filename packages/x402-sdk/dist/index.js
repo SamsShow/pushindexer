@@ -14,6 +14,13 @@ try {
   }
 } catch {
 }
+var PushChain;
+try {
+  if (typeof __require !== "undefined") {
+    PushChain = __require("@pushchain/core");
+  }
+} catch {
+}
 function validatePaymentRequirements(requirements) {
   if (!requirements || typeof requirements !== "object") {
     throw new Error("Invalid payment requirements: response data is not an object");
@@ -31,6 +38,53 @@ function validatePaymentRequirements(requirements) {
 var DEFAULT_PAYMENT_ENDPOINT = "https://pushindexer.vercel.app/api/payment/process";
 var DEFAULT_FACILITATOR_ADDRESS = "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7";
 var DEFAULT_CHAIN_ID = 42101;
+var DEFAULT_PUSH_CHAIN_RPC = "https://evm.rpc-testnet-donut-node1.push.org/";
+function detectChainInfo(paymentRequirements, config) {
+  if (paymentRequirements.rpcUrl) {
+    return {
+      chainId: paymentRequirements.chainId || DEFAULT_CHAIN_ID,
+      rpcUrl: paymentRequirements.rpcUrl,
+      network: paymentRequirements.network
+    };
+  }
+  if (paymentRequirements.chainId && config.chainRpcMap) {
+    const chainIdStr = String(paymentRequirements.chainId);
+    const rpcUrl = config.chainRpcMap[chainIdStr] || config.chainRpcMap[paymentRequirements.chainId];
+    if (rpcUrl) {
+      return {
+        chainId: paymentRequirements.chainId,
+        rpcUrl,
+        network: paymentRequirements.network
+      };
+    }
+  }
+  if (config.pushChainRpcUrl) {
+    return {
+      chainId: paymentRequirements.chainId || config.chainId || DEFAULT_CHAIN_ID,
+      rpcUrl: config.pushChainRpcUrl,
+      network: paymentRequirements.network
+    };
+  }
+  if (paymentRequirements.chainId) {
+    return {
+      chainId: paymentRequirements.chainId,
+      rpcUrl: DEFAULT_PUSH_CHAIN_RPC,
+      network: paymentRequirements.network
+    };
+  }
+  if (config.chainId) {
+    return {
+      chainId: config.chainId,
+      rpcUrl: DEFAULT_PUSH_CHAIN_RPC,
+      network: paymentRequirements.network
+    };
+  }
+  return {
+    chainId: DEFAULT_CHAIN_ID,
+    rpcUrl: DEFAULT_PUSH_CHAIN_RPC,
+    network: "push"
+  };
+}
 function createX402Client(config = {}) {
   const {
     paymentEndpoint = DEFAULT_PAYMENT_ENDPOINT,
@@ -40,7 +94,10 @@ function createX402Client(config = {}) {
     axiosConfig = {},
     onPaymentStatus,
     privateKey,
-    walletProvider
+    walletProvider,
+    universalSigner: providedUniversalSigner,
+    pushChainRpcUrl,
+    chainRpcMap
   } = config;
   const axiosInstance = axios.create({
     baseURL,
@@ -89,8 +146,68 @@ function createX402Client(config = {}) {
           if (!recipient || !amount) {
             throw new Error("Missing recipient or amount in payment requirements");
           }
+          const chainInfo = detectChainInfo(paymentRequirements, config);
           let paymentResult;
-          if (walletProvider) {
+          if (providedUniversalSigner || PushChain && (walletProvider || privateKey)) {
+            if (!PushChain) {
+              throw new Error("@pushchain/core is required for Universal Signer. Please install: npm install @pushchain/core");
+            }
+            try {
+              if (onPaymentStatus) {
+                onPaymentStatus("Using Universal Signer for multi-chain transaction...");
+              }
+              let universalSigner = providedUniversalSigner;
+              if (!universalSigner && walletProvider && ethers) {
+                if (onPaymentStatus) {
+                  onPaymentStatus("Creating Universal Signer from wallet provider...");
+                }
+                const chainSigner = await walletProvider.getSigner();
+                universalSigner = await PushChain.utils.signer.toUniversal(chainSigner);
+              }
+              if (!universalSigner && privateKey && ethers) {
+                if (onPaymentStatus) {
+                  onPaymentStatus("Creating Universal Signer from private key...");
+                }
+                const provider = new ethers.JsonRpcProvider(chainInfo.rpcUrl);
+                const ethersSigner = new ethers.Wallet(privateKey, provider);
+                universalSigner = await PushChain.utils.signer.toUniversal(ethersSigner);
+              }
+              if (!universalSigner) {
+                throw new Error("Failed to create Universal Signer");
+              }
+              const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
+              const amountWei = ethers ? ethers.parseEther(amount.toString()) : BigInt(Number(amount) * 1e18);
+              const facilitatorAbi = [
+                "function facilitateNativeTransfer(address recipient, uint256 amount) external payable"
+              ];
+              const iface = ethers ? new ethers.Interface(facilitatorAbi) : null;
+              const data = iface ? iface.encodeFunctionData("facilitateNativeTransfer", [recipient, amountWei]) : "0x";
+              const txResult = await universalSigner.signAndSendTransaction({
+                to: facilitatorContractAddress,
+                value: amountWei.toString(),
+                data
+              });
+              if (onPaymentStatus) {
+                onPaymentStatus("Transaction sent, waiting for confirmation...");
+              }
+              const txHash = typeof txResult === "string" ? txResult : txResult.hash || txResult.txHash;
+              const accountChainId = universalSigner.account?.chain || chainInfo.chainId;
+              const resolvedChainId = typeof accountChainId === "string" ? accountChainId.split(":")[1] || accountChainId : accountChainId;
+              paymentResult = {
+                success: true,
+                txHash,
+                recipient,
+                amount: amount.toString(),
+                chainId: String(resolvedChainId || chainInfo.chainId)
+              };
+            } catch (universalError) {
+              console.warn("Universal Signer failed, falling back to ethers.js:", universalError);
+              if (onPaymentStatus) {
+                onPaymentStatus("Universal Signer failed, using ethers.js fallback...");
+              }
+            }
+          }
+          if (!paymentResult && walletProvider) {
             if (!ethers) {
               throw new Error("ethers.js is required when using walletProvider. Please install: npm install ethers");
             }
@@ -123,10 +240,11 @@ function createX402Client(config = {}) {
               txHash: tx.hash,
               recipient,
               amount: amount.toString(),
-              chainId: network.chainId.toString(),
+              chainId: typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString(),
               blockNumber: receipt.blockNumber
             };
-          } else if (privateKey) {
+          }
+          if (!paymentResult && privateKey) {
             const paymentPayload = {
               recipient,
               amount,
@@ -153,10 +271,13 @@ function createX402Client(config = {}) {
               throw new Error("Payment processing failed: Invalid transaction hash received");
             }
             paymentResult = paymentResponse.data;
-          } else {
+          }
+          if (!paymentResult) {
             const paymentPayload = {
               recipient,
-              amount
+              amount,
+              chainId: chainInfo.chainId,
+              rpcUrl: chainInfo.rpcUrl
             };
             const paymentResponse = await axios.post(
               paymentEndpoint,
@@ -179,6 +300,9 @@ function createX402Client(config = {}) {
               throw new Error("Payment processing failed: Invalid transaction hash received");
             }
             paymentResult = paymentResponse.data;
+          }
+          if (!paymentResult) {
+            throw new Error("Payment processing failed: No payment method available or all methods failed");
           }
           const paymentProof = {
             scheme: paymentRequirements.scheme || "exact",

@@ -14,6 +14,7 @@ interface PaymentRequirements {
     facilitator?: string;
     network?: string;
     chainId?: string | number;
+    rpcUrl?: string;
     [key: string]: any;
 }
 /**
@@ -86,6 +87,40 @@ interface X402ClientConfig {
      * ```
      */
     walletProvider?: any;
+    /**
+     * Optional: Universal Signer from Push Chain SDK
+     * If provided, enables multi-chain transactions across all Push Chain supported networks.
+     * Takes priority over walletProvider/privateKey for cross-chain support.
+     *
+     * @example
+     * ```typescript
+     * import { PushChain } from '@pushchain/core';
+     * const universalSigner = await PushChain.utils.signer.toUniversal(ethersSigner);
+     * const client = createX402Client({ universalSigner });
+     * ```
+     */
+    universalSigner?: any;
+    /**
+     * Optional: Push Chain RPC URL for Universal Signer chain detection
+     * If not provided, will auto-detect from payment requirements or use default Push Chain testnet RPC
+     * The RPC URL determines which chain the Universal Signer operates on
+     */
+    pushChainRpcUrl?: string;
+    /**
+     * Optional: Mapping of chain IDs to RPC URLs for multi-chain support
+     * Used for automatic chain detection from payment requirements
+     * Format: { [chainId: string]: rpcUrl: string }
+     *
+     * @example
+     * ```typescript
+     * {
+     *   '42101': 'https://evm.rpc-testnet-donut-node1.push.org/',
+     *   '1': 'https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY',
+     *   '137': 'https://polygon-rpc.com'
+     * }
+     * ```
+     */
+    chainRpcMap?: Record<string | number, string>;
 }
 /**
  * Payment processor response

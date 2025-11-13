@@ -12,6 +12,9 @@ npm install push-x402 axios
 
 # If using wallet provider (browser/client-side), also install ethers
 npm install push-x402 axios ethers
+
+# For multi-chain support with Universal Signer, also install Push Chain SDK
+npm install push-x402 axios ethers @pushchain/core
 ```
 
 ## Quick Start
@@ -253,6 +256,35 @@ interface X402ClientConfig {
    * Requires: npm install ethers
    */
   walletProvider?: any; // ethers.Provider type
+  
+  /**
+   * Optional: Universal Signer from Push Chain SDK for multi-chain support
+   * If provided, enables automatic cross-chain transactions across all Push Chain supported networks.
+   * Takes priority over walletProvider/privateKey for multi-chain support.
+   * Requires: npm install @pushchain/core
+   */
+  universalSigner?: any; // UniversalSigner type from @pushchain/core
+  
+  /**
+   * Optional: Push Chain RPC URL for Universal Signer chain detection
+   * If not provided, will auto-detect from payment requirements or use default Push Chain testnet RPC
+   */
+  pushChainRpcUrl?: string;
+  
+  /**
+   * Optional: Mapping of chain IDs to RPC URLs for multi-chain support
+   * Used for automatic chain detection from payment requirements
+   * 
+   * @example
+   * ```typescript
+   * {
+   *   '42101': 'https://evm.rpc-testnet-donut-node1.push.org/',
+   *   '1': 'https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY',
+   *   '137': 'https://polygon-rpc.com'
+   * }
+   * ```
+   */
+  chainRpcMap?: Record<string | number, string>;
 }
 ```
 
@@ -347,11 +379,133 @@ const client = createX402Client({
 });
 ```
 
+### Multi-Chain Support with Universal Signer
+
+The SDK now supports **automatic multi-chain transactions** using Push Chain's Universal Signer! This enables seamless payments across all Push Chain supported networks without code changes.
+
+#### Automatic Chain Detection
+
+The SDK automatically detects the target chain from payment requirements:
+
+```typescript
+// Server returns 402 with chain information
+{
+  "amount": "0.001",
+  "recipient": "0x...",
+  "chainId": 1,  // Ethereum mainnet
+  "rpcUrl": "https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"  // Optional
+}
+```
+
+The SDK will automatically:
+1. Detect chain from `chainId` or `rpcUrl` in payment requirements
+2. Use Universal Signer if available (enables cross-chain)
+3. Fallback to ethers.js for backward compatibility
+
+#### Using Universal Signer
+
+**Option 1: Provide Universal Signer directly**
+
+```typescript
+import { PushChain } from '@pushchain/core';
+import { ethers } from 'ethers';
+import { createX402Client } from 'push-x402';
+
+// Create Universal Signer from ethers signer
+const provider = new ethers.JsonRpcProvider('https://evm.rpc-testnet-donut-node1.push.org/');
+const ethersSigner = new ethers.Wallet('YOUR_PRIVATE_KEY', provider);
+const universalSigner = await PushChain.utils.signer.toUniversal(ethersSigner);
+
+// Use Universal Signer in SDK
+const client = createX402Client({
+  universalSigner,
+  baseURL: 'https://api.example.com',
+});
+
+// Payments will work across all Push Chain supported networks!
+const response = await client.get('/protected/resource');
+```
+
+**Option 2: Auto-create from wallet provider**
+
+```typescript
+import { ethers } from 'ethers';
+import { createX402Client } from 'push-x402';
+
+const provider = new ethers.BrowserProvider(window.ethereum);
+const client = createX402Client({
+  walletProvider: provider,
+  // SDK will automatically create Universal Signer if @pushchain/core is installed
+  baseURL: 'https://api.example.com',
+});
+
+// Multi-chain payments work automatically!
+const response = await client.get('/protected/resource');
+```
+
+**Option 3: Configure chain RPC mapping**
+
+```typescript
+const client = createX402Client({
+  walletProvider: provider,
+  chainRpcMap: {
+    '42101': 'https://evm.rpc-testnet-donut-node1.push.org/',  // Push Chain testnet
+    '1': 'https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY',       // Ethereum
+    '137': 'https://polygon-rpc.com',                           // Polygon
+  },
+  baseURL: 'https://api.example.com',
+});
+
+// SDK automatically selects the correct RPC based on payment requirements
+```
+
+#### Chain Detection Priority
+
+The SDK detects chains in this order:
+1. `rpcUrl` from payment requirements (highest priority)
+2. `chainId` from payment requirements + `chainRpcMap` config
+3. `pushChainRpcUrl` config option
+4. `chainId` from payment requirements (uses default Push Chain RPC)
+5. `chainId` config option
+6. Default: Push Chain testnet (42101)
+
 ### Payment Options: Choose What Works for You
 
-The SDK supports **three payment methods** - choose based on your use case:
+The SDK supports **four payment methods** - choose based on your use case:
 
-#### Option 1: Private Key (Agents/Server-Side) ⚡
+#### Option 1: Universal Signer (Multi-Chain) 🌐
+
+Perfect for multi-chain applications. Works across all Push Chain supported networks automatically.
+
+```typescript
+import { PushChain } from '@pushchain/core';
+import { ethers } from 'ethers';
+import { createX402Client } from 'push-x402';
+
+// Create Universal Signer
+const provider = new ethers.JsonRpcProvider('https://evm.rpc-testnet-donut-node1.push.org/');
+const ethersSigner = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
+const universalSigner = await PushChain.utils.signer.toUniversal(ethersSigner);
+
+const client = createX402Client({
+  universalSigner,
+  baseURL: 'https://api.example.com',
+});
+
+// Works across all chains automatically!
+const response = await client.get('/protected/resource');
+```
+
+**Use Cases:**
+- ✅ Multi-chain applications
+- ✅ Cross-chain payments
+- ✅ Universal dApps
+- ✅ Push Chain ecosystem
+
+**Requirements:**
+- Install `@pushchain/core`: `npm install @pushchain/core`
+
+#### Option 2: Private Key (Agents/Server-Side) ⚡
 
 Perfect for automated agents and server-side applications. Transactions are signed automatically.
 
@@ -382,7 +536,7 @@ const response = await client.get('/protected/resource');
 - ✅ Never commit private keys to git
 - ✅ Use HTTPS only
 
-#### Option 2: Wallet Provider (Browser/Client-Side) 🔐
+#### Option 3: Wallet Provider (Browser/Client-Side) 🔐
 
 Perfect for browser applications. Users approve transactions in their wallet (MetaMask, WalletConnect, etc.).
 
@@ -414,7 +568,7 @@ const response = await client.get('/protected/resource');
 - Install ethers: `npm install ethers`
 - User must have a wallet extension (MetaMask, etc.)
 
-#### Option 3: Public Endpoint (Server-Side Setup)
+#### Option 4: Public Endpoint (Server-Side Setup)
 
 Use the public facilitator endpoint with your own server-side private key setup.
 

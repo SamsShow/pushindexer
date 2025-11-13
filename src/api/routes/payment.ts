@@ -7,15 +7,49 @@ const FACILITATOR_ABI = [
   "function facilitateNativeTransfer(address recipient, uint256 amount) external payable",
 ];
 
+// Dynamic import for Push Chain SDK (optional)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let PushChain: any;
+try {
+  PushChain = require("@pushchain/core");
+} catch {
+  // Push Chain SDK not available - will use ethers.js only
+}
+
+/**
+ * Detects chain RPC URL from request or config
+ */
+function getChainRpcUrl(requestBody: { rpcUrl?: string; chainId?: string | number }): string {
+  // Priority 1: RPC URL from request
+  if (requestBody.rpcUrl) {
+    return requestBody.rpcUrl;
+  }
+
+  // Priority 2: Chain ID mapping from config
+  if (requestBody.chainId && config.pushChain.chainRpcMap) {
+    const chainIdStr = String(requestBody.chainId);
+    const rpcUrl = config.pushChain.chainRpcMap[chainIdStr] || config.pushChain.chainRpcMap[requestBody.chainId];
+    if (rpcUrl) {
+      return rpcUrl;
+    }
+  }
+
+  // Priority 3: Default config RPC URL
+  return config.pushChain.rpcUrl;
+}
+
 export async function paymentRoutes(fastify: FastifyInstance) {
   fastify.post<{
     Body: {
       recipient: string;
       amount: string;
+      chainId?: string | number;
+      rpcUrl?: string;
+      privateKey?: string;
     };
   }>("/api/payment/process", async (request, reply) => {
     try {
-      const { recipient, amount } = request.body;
+      const { recipient, amount, chainId, rpcUrl: requestRpcUrl, privateKey: requestPrivateKey } = request.body;
 
       if (!recipient || !amount) {
         return reply.code(400).send({ error: "recipient and amount are required" });
@@ -25,15 +59,63 @@ export async function paymentRoutes(fastify: FastifyInstance) {
         return reply.code(400).send({ error: "Invalid recipient address" });
       }
 
-      const rpcUrl = config.pushChain.rpcUrl;
+      // Determine RPC URL (from request or config)
+      const rpcUrl = requestRpcUrl || getChainRpcUrl(request.body);
       const contractAddress = config.pushChain.facilitatorAddress;
-      // Use buyer's private key if available, otherwise fall back to PRIVATE_KEY
-      const privateKey = config.pushChain.buyerPrivateKey || process.env.PRIVATE_KEY;
+      // Use request private key, then buyer's private key, then fall back to PRIVATE_KEY
+      const privateKey = requestPrivateKey || config.pushChain.buyerPrivateKey || process.env.PRIVATE_KEY;
 
       if (!rpcUrl || !contractAddress || !privateKey) {
         return reply.code(500).send({ error: "Server configuration error: Missing RPC URL, contract address, or private key" });
       }
 
+      // Try Universal Signer first if available
+      if (PushChain && PushChain.utils && PushChain.utils.signer) {
+        try {
+          logger.info(`Using Universal Signer for payment on chain ${chainId || 'default'}`);
+          
+          const provider = new ethers.JsonRpcProvider(rpcUrl);
+          const ethersSigner = new ethers.Wallet(privateKey, provider);
+          const universalSigner = await PushChain.utils.signer.toUniversal(ethersSigner);
+
+          const amountWei = ethers.parseEther(amount.toString());
+          const facilitatorAbi = [
+            "function facilitateNativeTransfer(address recipient, uint256 amount) external payable",
+          ];
+          const iface = new ethers.Interface(facilitatorAbi);
+          const data = iface.encodeFunctionData("facilitateNativeTransfer", [recipient, amountWei]);
+
+          // Send transaction using Universal Signer
+          const txResult = await universalSigner.signAndSendTransaction({
+            to: contractAddress,
+            value: amountWei.toString(),
+            data: data,
+          });
+
+          const txHash = typeof txResult === 'string' ? txResult : txResult.hash || txResult.txHash;
+          const accountChainId = universalSigner.account?.chain || chainId || config.pushChain.chainId;
+          const resolvedChainId = typeof accountChainId === 'string' 
+            ? accountChainId.split(':')[1] || accountChainId 
+            : accountChainId;
+
+          logger.info(`Payment transaction sent via Universal Signer: ${txHash}`);
+
+          return reply.send({
+            success: true,
+            txHash,
+            recipient,
+            amount: amount.toString(),
+            chainId: String(resolvedChainId || chainId || (await provider.getNetwork()).chainId),
+          });
+        } catch (universalError: unknown) {
+          logger.warn("Universal Signer failed, falling back to ethers.js:", universalError);
+          // Fall through to ethers.js implementation
+        }
+      }
+
+      // Fallback to ethers.js (backward compatibility)
+      logger.info(`Using ethers.js for payment on chain ${chainId || 'default'}`);
+      
       const provider = new ethers.JsonRpcProvider(rpcUrl);
       const wallet = new ethers.Wallet(privateKey, provider);
       const contract = new ethers.Contract(contractAddress, FACILITATOR_ABI, wallet);
@@ -67,11 +149,12 @@ export async function paymentRoutes(fastify: FastifyInstance) {
         chainId: (await provider.getNetwork()).chainId.toString(),
         blockNumber: receipt.blockNumber,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
       logger.error("Error processing payment:", error);
       return reply.code(500).send({
         error: "Transaction failed",
-        message: error.message || "Unknown error",
+        message: errorMessage,
       });
     }
   });
