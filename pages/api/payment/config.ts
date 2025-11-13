@@ -14,9 +14,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  console.log('Next.js payment config endpoint called', {
+  // Log to verify this route is being hit
+  console.log('✅ NEXT.JS PAYMENT CONFIG ENDPOINT CALLED', {
     method: req.method,
     url: req.url,
+    timestamp: new Date().toISOString(),
   });
 
   try {
