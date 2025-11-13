@@ -1,35 +1,35 @@
-# Push Chain Facilitator Indexer
+# Push Chain x402 Payment Protocol
 
-A production-ready indexer for monitoring and indexing facilitator transactions on Push Chain testnet.
+A complete implementation of the x402 Payment Protocol for Push Chain, including Facilitator API, Indexer API, and x402 SDK.
 
-## Features
+## Overview
 
-- **Facilitator Smart Contract**: EVM-compatible contract for token transfers and cross-chain operations
-- **Real-time Indexing**: WebSocket-based event monitoring with HTTP polling fallback
-- **Neon Database**: Serverless PostgreSQL storage with proper indexing for fast queries
-- **REST API**: Fastify-based API for querying indexed transactions
-- **Reorg Handling**: Automatic detection and reprocessing of chain reorganizations
-- **Confirmation Tracking**: Waits for N confirmations before marking transactions as final
+This repository contains four main components:
 
-## Architecture
+1. **Facilitator API** - Smart contract interaction endpoints for x402 payments
+2. **Indexer API** - Transaction indexing and query endpoints
+3. **x402 SDK** - NPM-publishable SDK for automatic 402 payment handling
+4. **Demo Page** - Simple test interface for all components
+
+## Project Structure
 
 ```
-Facilitator Contract (Push Chain)
-    ↓ Events
-Indexer Service (Node.js + ethers.js)
-    ↓ Database Writes
-Neon (Serverless PostgreSQL)
-    ↓ Query API
-REST API (Fastify)
+├── api/
+│   ├── facilitator/     # Facilitator contract endpoints
+│   ├── indexer/         # Indexer query endpoints
+│   ├── demo/            # Demo protected endpoint
+│   └── payment/         # Payment processing endpoint
+├── packages/
+│   └── x402-sdk/        # x402 SDK package (npm publishable)
+├── pages/
+│   └── demo.tsx         # Simple demo page
+├── src/
+│   ├── indexer/         # Indexer service code
+│   └── db/              # Database client and schema
+└── contracts/           # Smart contracts
 ```
 
-## Setup
-
-### Prerequisites
-
-- Node.js 18+
-- Neon account (free tier available at https://neon.tech)
-- Hardhat (for contract deployment)
+## Quick Start
 
 ### Installation
 
@@ -39,91 +39,166 @@ npm install
 
 ### Environment Configuration
 
-Copy `.env.example` to `.env` and configure:
+Create a `.env` file (see `.env.example`):
 
 ```bash
-cp .env.example .env
+PUSH_CHAIN_RPC_URL=https://evm.rpc-testnet-donut-node1.push.org/
+PUSH_CHAIN_WS_URL=wss://evm.rpc-testnet-donut-node1.push.org/
+PUSH_CHAIN_ID=42101
+FACILITATOR_CONTRACT_ADDRESS=0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7
+DATABASE_URL=postgresql://...
+BUYER_PRIVATE_KEY=your_buyer_private_key_here
+SELLER_WALLET_ADDRESS=0x0dFd63e8b357eD75D502bb42F6e4eC63E2D84761
 ```
-
-Key variables:
-- `PUSH_CHAIN_RPC_URL`: Push Chain testnet RPC endpoint
-- `DATABASE_URL`: Neon database connection string (get from https://console.neon.tech)
-- `FACILITATOR_CONTRACT_ADDRESS`: Deployed facilitator contract address
 
 ### Database Setup
 
-1. **Create a Neon database:**
-   - Sign up at https://neon.tech (free tier available)
-   - Create a new project
-   - Copy the connection string from the dashboard
-
-2. **Update `.env` with your Neon connection string:**
-   ```bash
-   DATABASE_URL=postgresql://username:password@ep-xxx-xxx.region.aws.neon.tech/dbname?sslmode=require
-   ```
-
-3. **Run migrations:**
-   ```bash
-   npm run db:migrate
-   ```
-
-   **Note:** For Neon, you can also run migrations directly from the Neon console SQL editor by copying the contents of `src/db/schema.sql`.
-
-   **📖 For detailed Neon setup instructions, see [NEON_SETUP.md](./NEON_SETUP.md)**
-
-### Deploy Facilitator Contract
+1. Create a Neon database at [console.neon.tech](https://console.neon.tech)
+2. Add `DATABASE_URL` to your `.env` file
+3. Run migrations:
 
 ```bash
-# Compile contracts
-npm run compile
-
-# Deploy to Push Chain testnet
-npm run deploy
+npm run db:migrate
 ```
 
-### Run Indexer
+**Note:** For Vercel deployment, see [VERCEL_SETUP.md](./VERCEL_SETUP.md)
+
+### Development
 
 ```bash
-# Development mode
+# Run Next.js dev server (includes demo page)
 npm run dev
 
-# Production mode
-npm run build
-npm start
-```
+# Build SDK
+npm run build:sdk
 
-### Run API Server
+# Run SDK in watch mode
+npm run sdk:dev
 
-```bash
-# Development mode
+# Run indexer service
+npm run indexer
+
+# Run API server
 npm run api
-
-# Production mode (after build)
-node dist/api/server.js
 ```
 
-## API Endpoints
+## Components
 
-- `GET /health` - Health check
-- `GET /v1/tx/:txHash` - Get transaction details
-- `GET /v1/address/:address/txs` - List transactions by address
-- `GET /v1/facilitator/stats` - Aggregate statistics
-- `GET /v1/events` - Query event logs with filters
+### 1. Facilitator API
+
+Contract interaction endpoints for processing payments.
+
+**Endpoints:**
+- `GET /api/facilitator/info` - Get contract information
+- `POST /api/facilitator/native-transfer` - Process native token transfer
+- `POST /api/facilitator/token-transfer` - Process ERC20 token transfer
+- `POST /api/facilitator/cross-chain` - Process cross-chain operation
+
+See [API_ENDPOINTS.md](./API_ENDPOINTS.md) for detailed documentation.
+
+### 2. Indexer API
+
+Query indexed transactions and events.
+
+**Endpoints:**
+- `GET /api/indexer/tx?hash=0x...` - Get transaction by hash
+- `GET /api/indexer/events` - Query events with filters
+- `GET /api/indexer/stats` - Get statistics
+
+See [API_ENDPOINTS.md](./API_ENDPOINTS.md) for detailed documentation.
+
+### 3. x402 SDK
+
+NPM-publishable SDK for automatic HTTP 402 payment handling.
+
+**Installation:**
+```bash
+npm install @pushchain/x402-sdk axios
+```
+
+**Usage:**
+```typescript
+import { createX402Client } from '@pushchain/x402-sdk';
+
+const client = createX402Client({
+  paymentEndpoint: 'https://api.example.com/api/payment/process',
+  facilitatorAddress: '0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7',
+  chainId: 42101,
+});
+
+// Automatically handles 402 responses
+const response = await client.get('https://api.example.com/protected/resource');
+```
+
+See [packages/x402-sdk/README.md](./packages/x402-sdk/README.md) for detailed SDK documentation.
+
+### 4. Demo Page
+
+Simple test interface at `/demo` to test all components.
+
+## Deployment
+
+### Vercel
+
+1. Connect your repository to Vercel
+2. Set environment variables in Vercel dashboard
+3. Deploy - the build command will automatically build the SDK
+
+The project is configured with:
+- Next.js framework
+- Automatic SDK build on deployment
+- API routes for Facilitator, Indexer, and Payment endpoints
+
+## Architecture
+
+```
+┌─────────────────┐
+│   Client App    │
+│  (uses x402 SDK)│
+└────────┬────────┘
+         │ HTTP Request
+         ▼
+┌─────────────────┐
+│  Protected API  │
+│  (returns 402)  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐      ┌──────────────┐
+│   x402 SDK      │─────▶│  Facilitator │
+│  (interceptor)  │      │     API      │
+└────────┬────────┘      └──────────────┘
+         │
+         │ Payment Proof
+         ▼
+┌─────────────────┐      ┌──────────────┐
+│  Protected API  │      │   Indexer    │
+│  (verifies)     │◀─────│     API      │
+└─────────────────┘      └──────────────┘
+```
 
 ## Development
 
+### Building the SDK
+
 ```bash
-# Compile TypeScript
+cd packages/x402-sdk
+npm install
 npm run build
+```
 
-# Run tests
+### Running Tests
+
+```bash
 npm test
+```
 
-# Lint code
+### Linting
+
+```bash
 npm run lint
 ```
 
 ## License
 
 MIT
-

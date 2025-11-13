@@ -1,8 +1,17 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Enable CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-PAYMENT');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   // Check for payment header
-  const paymentHeader = req.headers["x-payment"] as string | undefined;
+  const paymentHeader = req.headers["x-payment"];
 
   if (!paymentHeader) {
     // Return 402 Payment Required with payment specification
@@ -19,38 +28,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Payment provided - verify and return protected resource
   try {
-    // In a real implementation, you would verify the payment here
-    // For demo purposes, we'll just return the resource
-    
-    const startTime = Date.now();
-    
-    // Simulate some processing time
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    const weatherData = {
-      location: "San Francisco, CA",
-      temperature: 72,
-      condition: "Sunny",
-      humidity: 65,
-      windSpeed: 8,
+    const protectedData = {
+      message: "This is a protected resource",
+      timestamp: new Date().toISOString(),
+      paymentReceived: true,
     };
 
-    const processingTime = Date.now() - startTime;
-
-    // Set response headers with timing information
-    res.setHeader("x-payment-response", paymentHeader);
+    // Set response headers
+    res.setHeader("x-payment-response", paymentHeader as string);
     res.setHeader("x-settlement-time", "128");
     res.setHeader("x-verification-time", "64");
-    res.setHeader("x-matched-path", "/api/protected/weather");
 
     return res.status(200).json({
       success: true,
-      data: weatherData,
-      processingTime: `${processingTime}ms`,
+      data: protectedData,
     });
   } catch (error: any) {
+    console.error("Error:", error);
     return res.status(500).json({
-      error: "Failed to process request",
+      error: "Internal server error",
       message: error.message,
     });
   }

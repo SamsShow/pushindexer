@@ -1,0 +1,43 @@
+{
+  "name": "@pushchain/x402-sdk",
+  "version": "0.1.0",
+  "description": "x402 Payment Protocol SDK for Push Chain",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "type": "module",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --external axios",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch --external axios",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "x402",
+    "push-chain",
+    "payment-protocol",
+    "http-402",
+    "blockchain-payments"
+  ],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "axios": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "tsup": "^8.4.0",
+    "typescript": "^5.3.3"
+  }
+}
+

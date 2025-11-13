@@ -40,6 +40,7 @@
     "api/**/*",
     "pages/**/*",
     "styles/**/*",
+    "packages/**/*",
     "next-env.d.ts"
   ],
   "exclude": [
