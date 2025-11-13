@@ -1,14 +1,4 @@
 {
-  "framework": "nextjs",
-  "rewrites": [
-    {
-      "source": "/api/payment/:path*",
-      "destination": "/api/payment/:path*"
-    },
-    {
-      "source": "/api/protected/:path*",
-      "destination": "/api/protected/:path*"
-    }
-  ]
+  "framework": "nextjs"
 }
 

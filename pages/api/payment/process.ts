@@ -6,9 +6,27 @@ const FACILITATOR_ABI = [
 ];
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Enable CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
+
+  console.log('Next.js payment process endpoint called', {
+    method: req.method,
+    body: req.body,
+    hasRpcUrl: !!process.env.PUSH_CHAIN_RPC_URL,
+    hasContractAddress: !!process.env.FACILITATOR_CONTRACT_ADDRESS,
+    hasBuyerKey: !!process.env.BUYER_PRIVATE_KEY,
+    hasPrivateKey: !!process.env.PRIVATE_KEY,
+  });
 
   try {
     const { recipient, amount } = req.body;
