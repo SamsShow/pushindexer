@@ -22,7 +22,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Log to verify this route is being hit
   console.log('✅ VERCEL SERVERLESS PAYMENT PROCESS ENDPOINT CALLED', {
     method: req.method,
+    url: req.url,
     body: req.body,
+    headers: Object.keys(req.headers),
     hasRpcUrl: !!process.env.PUSH_CHAIN_RPC_URL,
     hasContractAddress: !!process.env.FACILITATOR_CONTRACT_ADDRESS,
     hasBuyerKey: !!process.env.BUYER_PRIVATE_KEY,
