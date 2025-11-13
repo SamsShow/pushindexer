@@ -8,5 +8,4 @@ artifacts
 contracts
 scripts
 hardhat.config.cjs
-api/payment.backup
 
