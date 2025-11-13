@@ -59,14 +59,20 @@ export default function Demo() {
         setShowIndexedData(true);
         setIndexerLoading(false);
       } else if (response.status === 404) {
-        // Transaction not indexed yet - retry after delay
-        if (retryCount < 5) {
+        // Transaction not found - API will try on-demand indexing on first request
+        // Retry once to trigger on-demand indexing
+        if (retryCount === 0) {
+          // First retry triggers on-demand indexing
+          setTimeout(() => fetchIndexedData(txHash, retryCount + 1), 2000);
+        } else if (retryCount < 3) {
+          // Additional retries in case indexing takes time
           setTimeout(() => fetchIndexedData(txHash, retryCount + 1), 3000);
         } else {
           setIndexerLoading(false);
+          const errorData = await response.json().catch(() => ({}));
           setIndexedData({ 
-            error: 'Transaction not found in indexer',
-            message: 'The transaction was successful, but it may not be indexed yet. The indexer processes transactions asynchronously.'
+            error: 'Transaction not found',
+            message: errorData.message || 'The transaction was not found. It may not contain a FacilitatedTx event or the transaction hash is incorrect.'
           });
         }
         return;
@@ -381,7 +387,10 @@ export default function Demo() {
                         ⚠️ {indexedData.error}
                       </div>
                       <div style={{ color: '#6b7280', fontSize: '13px', marginBottom: '16px' }}>
-                        {indexedData.message || 'Transaction was successful, but not yet indexed. The indexer may need time to process the transaction.'}
+                        {indexedData.message || 'Transaction was successful, but not found in indexer. The API will attempt on-demand indexing automatically.'}
+                      </div>
+                      <div style={{ color: '#6b7280', fontSize: '12px', marginBottom: '12px', fontStyle: 'italic' }}>
+                        💡 Tip: The indexer uses on-demand indexing - transactions are automatically indexed when requested if they contain FacilitatedTx events.
                       </div>
                       <div style={styles.txHashDisplay}>
                         {txHash}

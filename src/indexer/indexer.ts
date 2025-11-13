@@ -7,6 +7,7 @@ import { ConfirmationWorker } from "./confirmationWorker.js";
 import { ReorgHandler } from "./reorgHandler.js";
 import { EventLog } from "../types/index.js";
 import { metrics } from "../monitoring/metrics.js";
+import { indexTransactionFromBlockchain } from "./indexingHelpers.js";
 
 // Facilitator contract ABI (just the event)
 const FACILITATOR_ABI = [
@@ -109,102 +110,21 @@ class Indexer {
   private async handleEvent(log: EventLog, parsed: any): Promise<void> {
     try {
       const pool = getDbPool();
+      const facilitatorInterface = new ethers.Interface(FACILITATOR_ABI);
 
-      // Get transaction details
-      const tx = await this.provider.getTransaction(log.transactionHash);
-      if (!tx) {
-        logger.warn(`Transaction ${log.transactionHash} not found`);
-        return;
-      }
+      // Use shared indexing helper
+      const indexed = await indexTransactionFromBlockchain(
+        log.transactionHash,
+        this.provider,
+        facilitatorInterface
+      );
 
+      // Get receipt for block number and hash
       const receipt = await this.provider.getTransactionReceipt(log.transactionHash);
       if (!receipt) {
         logger.warn(`Receipt for ${log.transactionHash} not found`);
         return;
       }
-
-      const block = await this.provider.getBlock(receipt.blockNumber);
-      if (!block) {
-        logger.warn(`Block ${receipt.blockNumber} not found`);
-        return;
-      }
-
-      // Extract event arguments
-      const args = parsed.args;
-      const sender = args.sender?.toString() || "";
-      const target = args.target?.toString() || "";
-      const token = args.token?.toString() || null;
-      const value = args.value?.toString() || "0";
-      // Use actual transaction hash from the log, not from event args
-      const txHash = log.transactionHash;
-      const timestamp = args.timestamp?.toString() || block.timestamp.toString();
-      const txType = args.txType || 0;
-
-      // Prepare decoded data
-      const decoded = {
-        event: parsed.name,
-        sender,
-        target,
-        token,
-        value,
-        txType,
-        timestamp,
-      };
-
-      // Upsert transaction
-      await pool.query(
-        `INSERT INTO facilitated_tx (
-          tx_hash, block_number, block_hash, block_timestamp,
-          sender, target, facilitator, token_address, value,
-          gas_used, gas_price, input_data, decoded, status, chain_id, tx_type
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-        ON CONFLICT (tx_hash) DO UPDATE SET
-          block_number = EXCLUDED.block_number,
-          block_hash = EXCLUDED.block_hash,
-          block_timestamp = EXCLUDED.block_timestamp,
-          status = EXCLUDED.status,
-          decoded = EXCLUDED.decoded,
-          updated_at = NOW()`,
-        [
-          log.transactionHash,
-          receipt.blockNumber,
-          receipt.blockHash,
-          new Date(Number(block.timestamp) * 1000).toISOString(),
-          sender,
-          target,
-          config.pushChain.facilitatorAddress,
-          token,
-          value,
-          receipt.gasUsed.toString(),
-          tx.gasPrice?.toString() || null,
-          tx.data || null,
-          JSON.stringify(decoded),
-          "pending",
-          config.pushChain.chainId,
-          txType,
-        ]
-      );
-
-      // Insert event log
-      await pool.query(
-        `INSERT INTO facilitator_event (tx_hash, event_name, event_args, log_index, block_number)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (tx_hash, log_index) DO NOTHING`,
-        [
-          log.transactionHash,
-          parsed.name,
-          JSON.stringify({
-            sender,
-            target,
-            token,
-            value,
-            timestamp,
-            txType,
-          }),
-          log.logIndex,
-          receipt.blockNumber,
-        ]
-      );
 
       // Update indexer state
       await pool.query(
@@ -217,11 +137,12 @@ class Indexer {
       );
 
       // Track metrics
+      const txType = indexed.transaction.tx_type || 0;
       metrics.incrementCounter("indexer_events_indexed", { event: parsed.name, txType: txType.toString() });
       metrics.setGauge("indexer_latest_block", receipt.blockNumber);
 
       logger.info(
-        `Indexed ${parsed.name} event: tx=${log.transactionHash}, sender=${sender}, target=${target}, value=${value}, type=${txType}`
+        `Indexed ${parsed.name} event: tx=${log.transactionHash}, sender=${indexed.transaction.sender}, target=${indexed.transaction.target}, value=${indexed.transaction.value}, type=${txType}`
       );
     } catch (error) {
       logger.error(`Error handling event for tx ${log.transactionHash}:`, error);

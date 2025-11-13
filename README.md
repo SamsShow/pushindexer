@@ -98,12 +98,21 @@ See [API_ENDPOINTS.md](./API_ENDPOINTS.md) for detailed documentation.
 
 ### 2. Indexer API
 
-Query indexed transactions and events.
+Query indexed transactions and events. The indexer supports **on-demand indexing** - if a transaction is not found in the database, it will automatically fetch and index it from the blockchain.
 
 **Endpoints:**
-- `GET /api/indexer/tx?hash=0x...` - Get transaction by hash
+- `GET /api/indexer/tx?hash=0x...` - Get transaction by hash (automatically indexes if not found)
 - `GET /api/indexer/events` - Query events with filters
 - `GET /api/indexer/stats` - Get statistics
+
+**On-Demand Indexing:**
+- When querying a transaction that doesn't exist in the database, the API automatically:
+  1. Fetches the transaction from the blockchain RPC
+  2. Parses the `FacilitatedTx` event
+  3. Stores it in the database
+  4. Returns the indexed data immediately
+
+This eliminates the need for a continuously running indexer service for low-volume use cases.
 
 See [API_ENDPOINTS.md](./API_ENDPOINTS.md) for detailed documentation.
 
