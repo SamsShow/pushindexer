@@ -1,4 +1,4 @@
-# @pushchain/x402-sdk
+# push-x402
 
 **Drop-in axios replacement that automatically handles HTTP 402 Payment Required responses with blockchain payments.**
 
@@ -7,7 +7,7 @@ Just use it like axios - it automatically handles payments when you hit a protec
 ## Installation
 
 ```bash
-npm install @pushchain/x402-sdk axios
+npm install push-x402 axios
 ```
 
 ## Quick Start
@@ -17,7 +17,7 @@ npm install @pushchain/x402-sdk axios
 **That's it!** No configuration needed. The SDK uses the public facilitator API by default.
 
 ```typescript
-import { createX402Client } from '@pushchain/x402-sdk';
+import { createX402Client } from 'push-x402';
 
 // Create client (works exactly like axios)
 const client = createX402Client();
@@ -30,7 +30,7 @@ console.log(response.data);
 ### Complete Example
 
 ```typescript
-import { createX402Client } from '@pushchain/x402-sdk';
+import { createX402Client } from 'push-x402';
 
 // Option 1: Use full URLs
 const client = createX402Client();

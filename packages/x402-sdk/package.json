@@ -1,7 +1,7 @@
 {
-  "name": "@pushchain/x402-sdk",
+  "name": "push-x402",
   "version": "0.1.0",
-  "description": "x402 Payment Protocol SDK for Push Chain",
+  "description": "Drop-in axios replacement that automatically handles HTTP 402 Payment Required responses with blockchain payments on Push Chain",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
