@@ -53,6 +53,23 @@ export async function createServer() {
     logger.warn(`Public directory not found at: ${publicDir}`);
   }
 
+  // Root route - redirect to Next.js app or provide info
+  fastify.get("/", async (request, reply) => {
+    return reply.code(200).send({
+      message: "Push Chain Indexer API",
+      version: "1.0.0",
+      endpoints: {
+        health: "/health",
+        stats: "/api/indexer/stats",
+        transaction: "/api/indexer/tx?hash=<txHash>",
+        events: "/api/indexer/events",
+        payment: "/api/payment/process",
+        protected: "/api/protected/weather",
+      },
+      note: "For the demo page, please use the Next.js dev server: npm run dev (runs on http://localhost:3000)",
+    });
+  });
+
   // Protected API endpoint (x402 demo)
   fastify.get("/api/protected/weather", async (request, reply) => {
     const paymentHeader = request.headers["x-payment"];

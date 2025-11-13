@@ -87,9 +87,6 @@ export default function Home() {
       // Use server-side payment endpoint with buyer's private key
       setPaymentStatus({ type: 'pending', text: 'Sending payment transaction...' })
       
-      console.log('Calling payment API:', `${API_BASE}/api/payment/process`)
-      console.log('Payment request body:', { recipient: paymentSpec.recipient, amount: paymentSpec.amount })
-      
       const paymentResponse = await fetch(`${API_BASE}/api/payment/process`, {
         method: 'POST',
         headers: {
@@ -101,8 +98,6 @@ export default function Home() {
         }),
       })
 
-      console.log('Payment API response status:', paymentResponse.status, paymentResponse.statusText)
-
       if (!paymentResponse.ok) {
         const errorData = await paymentResponse.json()
         console.error('Payment API error:', errorData)
@@ -110,8 +105,6 @@ export default function Home() {
       }
 
       const paymentResult = await paymentResponse.json()
-      console.log('✅ Payment API response:', paymentResult)
-      console.log('✅ Transaction hash from API:', paymentResult.txHash)
 
       setPaymentStatus({ type: 'pending', text: 'Transaction confirmed, preparing payment proof...' })
 
@@ -127,9 +120,6 @@ export default function Home() {
         timestamp: Date.now(),
       }
       
-      console.log('Payment proof created:', paymentProof)
-      console.log('Transaction hash in proof:', paymentProof.txHash)
-      
       if (!paymentProof.txHash) {
         console.error('⚠️ WARNING: No txHash in payment result!', paymentResult)
       }
@@ -143,7 +133,6 @@ export default function Home() {
 
   const fetchIndexedData = async (txHash: string) => {
     if (!txHash || txHash === '-') {
-      console.warn('Invalid transaction hash:', txHash)
       return
     }
     
@@ -151,7 +140,6 @@ export default function Home() {
     
     // Use local API (same origin, no CORS issues)
     const indexerUrl = `${API_BASE}/api/indexer/tx?hash=${txHash}`
-    console.log('Fetching from local indexer API:', indexerUrl)
     
     try {
       const response = await fetch(indexerUrl, {
@@ -160,18 +148,15 @@ export default function Home() {
           'Accept': 'application/json',
         },
       })
-      console.log('Indexer API response status:', response.status)
       
       if (response.ok) {
         const data = await response.json()
-        console.log('✅ Indexer data received:', data)
         setIndexedData(data)
         setShowIndexedData(true)
         setIndexerLoading(false)
         return
       } else if (response.status === 404) {
         // Transaction not indexed yet, retry after delay
-        console.log('Transaction not indexed yet (404), retrying in 3 seconds...')
         setIndexerLoading(true)
         setTimeout(() => fetchIndexedData(txHash), 3000)
         return
@@ -216,7 +201,6 @@ export default function Home() {
         setPaymentStatus({ type: 'pending', text: `Payment required: ${initialData.amount} ${initialData.currency}` })
 
         const paymentProof = await simulatePayment(initialData)
-        console.log('Payment proof returned from simulatePayment:', paymentProof)
 
         const paymentResponse = await fetch(PROTECTED_ENDPOINT, {
           headers: {
@@ -254,30 +238,24 @@ export default function Home() {
 
         // Extract transaction hash from payment proof
         const transactionHash = paymentProof.txHash
-        console.log('Payment proof:', paymentProof)
-        console.log('Transaction hash from payment proof:', transactionHash)
         
         if (transactionHash) {
-          console.log('✅ Transaction hash received:', transactionHash)
           setTxHash(transactionHash)
           setShowPaymentDetails(true)
           // Start fetching indexer data immediately
-          console.log('🚀 Starting to fetch indexer data for:', transactionHash)
           fetchIndexedData(transactionHash)
         } else {
-          console.error('❌ No transaction hash in payment proof!', paymentProof)
           // Try to extract from response headers
           const paymentResponseHeader = headers['x-payment-response']
           if (paymentResponseHeader) {
             try {
               const parsedPayment = JSON.parse(paymentResponseHeader)
               if (parsedPayment.txHash) {
-                console.log('✅ Found transaction hash in response headers:', parsedPayment.txHash)
                 setTxHash(parsedPayment.txHash)
                 fetchIndexedData(parsedPayment.txHash)
               }
             } catch (e) {
-              console.error('Failed to parse payment response header:', e)
+              // Silently handle parse errors
             }
           }
         }
@@ -420,14 +398,6 @@ export default function Home() {
                   )}
                 </div>
               )}
-
-              {/* Debug: Always show txHash status */}
-              <div style={{ marginTop: '20px', padding: '12px', background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '6px', fontSize: '12px' }}>
-                <div style={{ color: '#991b1b', fontWeight: '600', marginBottom: '4px' }}>Debug Info:</div>
-                <div style={{ color: '#991b1b' }}>txHash: {txHash || 'NOT SET'}</div>
-                <div style={{ color: '#991b1b' }}>indexerLoading: {indexerLoading ? 'true' : 'false'}</div>
-                <div style={{ color: '#991b1b' }}>showIndexedData: {showIndexedData ? 'true' : 'false'}</div>
-              </div>
 
               {/* Indexer section - always show when txHash exists */}
               {txHash && txHash !== '-' && (
