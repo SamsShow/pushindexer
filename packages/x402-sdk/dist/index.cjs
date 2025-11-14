@@ -37,18 +37,58 @@ module.exports = __toCommonJS(index_exports);
 // src/client.ts
 var import_axios = __toESM(require("axios"), 1);
 var ethers;
-try {
-  if (typeof require !== "undefined") {
-    ethers = require("ethers");
+var ethersPromise = null;
+async function loadEthers() {
+  if (ethers) {
+    return ethers;
   }
-} catch {
+  if (ethersPromise) {
+    return ethersPromise;
+  }
+  ethersPromise = (async () => {
+    try {
+      const ethersModule = await import("ethers");
+      ethers = ethersModule.default || ethersModule;
+      return ethers;
+    } catch (error) {
+      if (typeof require !== "undefined") {
+        try {
+          ethers = require("ethers");
+          return ethers;
+        } catch {
+        }
+      }
+      throw new Error("ethers.js is not available. Please install it: npm install ethers");
+    }
+  })();
+  return ethersPromise;
 }
 var PushChain;
-try {
-  if (typeof require !== "undefined") {
-    PushChain = require("@pushchain/core");
+var pushChainPromise = null;
+async function loadPushChain() {
+  if (PushChain) {
+    return PushChain;
   }
-} catch {
+  if (pushChainPromise) {
+    return pushChainPromise;
+  }
+  pushChainPromise = (async () => {
+    try {
+      const pushChainModule = await import("@pushchain/core");
+      PushChain = pushChainModule.default || pushChainModule;
+      return PushChain;
+    } catch (error) {
+      if (typeof require !== "undefined") {
+        try {
+          PushChain = require("@pushchain/core");
+          return PushChain;
+        } catch {
+        }
+      }
+      return null;
+    }
+  })();
+  return pushChainPromise;
 }
 function validatePaymentRequirements(requirements) {
   if (!requirements || typeof requirements !== "object") {
@@ -176,37 +216,39 @@ function createX402Client(config = {}) {
             throw new Error("Missing recipient or amount in payment requirements");
           }
           const chainInfo = detectChainInfo(paymentRequirements, config);
+          const PushChainModule = walletProvider || privateKey ? await loadPushChain() : null;
+          const ethersModule = walletProvider || privateKey ? await loadEthers() : null;
           let paymentResult;
-          if (providedUniversalSigner || PushChain && PushChain.utils && PushChain.utils.signer && (walletProvider || privateKey)) {
+          if (providedUniversalSigner || PushChainModule && PushChainModule.utils && PushChainModule.utils.signer && (walletProvider || privateKey)) {
             try {
               if (onPaymentStatus) {
                 onPaymentStatus("Using Universal Signer for multi-chain transaction...");
               }
               let universalSigner = providedUniversalSigner;
-              if (!universalSigner && walletProvider && ethers && PushChain && PushChain.utils && PushChain.utils.signer) {
+              if (!universalSigner && walletProvider && ethersModule && PushChainModule && PushChainModule.utils && PushChainModule.utils.signer) {
                 if (onPaymentStatus) {
                   onPaymentStatus("Creating Universal Signer from wallet provider...");
                 }
                 const chainSigner = await walletProvider.getSigner();
-                universalSigner = await PushChain.utils.signer.toUniversal(chainSigner);
+                universalSigner = await PushChainModule.utils.signer.toUniversal(chainSigner);
               }
-              if (!universalSigner && privateKey && ethers && PushChain && PushChain.utils && PushChain.utils.signer) {
+              if (!universalSigner && privateKey && ethersModule && PushChainModule && PushChainModule.utils && PushChainModule.utils.signer) {
                 if (onPaymentStatus) {
                   onPaymentStatus("Creating Universal Signer from private key...");
                 }
-                const provider = new ethers.JsonRpcProvider(chainInfo.rpcUrl);
-                const ethersSigner = new ethers.Wallet(privateKey, provider);
-                universalSigner = await PushChain.utils.signer.toUniversal(ethersSigner);
+                const provider = new ethersModule.JsonRpcProvider(chainInfo.rpcUrl);
+                const ethersSigner = new ethersModule.Wallet(privateKey, provider);
+                universalSigner = await PushChainModule.utils.signer.toUniversal(ethersSigner);
               }
               if (!universalSigner) {
                 throw new Error("Failed to create Universal Signer");
               }
               const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
-              const amountWei = ethers ? ethers.parseEther(amount.toString()) : BigInt(Number(amount) * 1e18);
+              const amountWei = ethersModule ? ethersModule.parseEther(amount.toString()) : BigInt(Number(amount) * 1e18);
               const facilitatorAbi = [
                 "function facilitateNativeTransfer(address recipient, uint256 amount) external payable"
               ];
-              const iface = ethers ? new ethers.Interface(facilitatorAbi) : null;
+              const iface = ethersModule ? new ethersModule.Interface(facilitatorAbi) : null;
               const data = iface ? iface.encodeFunctionData("facilitateNativeTransfer", [recipient, amountWei]) : "0x";
               let txResult;
               if (typeof universalSigner.sendTransaction === "function") {
@@ -216,12 +258,12 @@ function createX402Client(config = {}) {
                   data
                 };
                 txResult = await universalSigner.sendTransaction(txRequest);
-              } else if (walletProvider && ethers) {
+              } else if (walletProvider && ethersModule) {
                 if (onPaymentStatus) {
                   onPaymentStatus("Universal Signer: Using underlying wallet provider for transaction...");
                 }
                 const signer = await walletProvider.getSigner();
-                const contract = new ethers.Contract(facilitatorContractAddress, facilitatorAbi, signer);
+                const contract = new ethersModule.Contract(facilitatorContractAddress, facilitatorAbi, signer);
                 const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
                   recipient,
                   amountWei,
@@ -238,13 +280,13 @@ function createX402Client(config = {}) {
                   chainId: typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString(),
                   blockNumber: receipt.blockNumber
                 };
-              } else if (privateKey && ethers) {
+              } else if (privateKey && ethersModule) {
                 if (onPaymentStatus) {
                   onPaymentStatus("Using private key with Universal Signer chain detection...");
                 }
-                const provider = new ethers.JsonRpcProvider(chainInfo.rpcUrl);
-                const ethersSigner = new ethers.Wallet(privateKey, provider);
-                const contract = new ethers.Contract(facilitatorContractAddress, facilitatorAbi, ethersSigner);
+                const provider = new ethersModule.JsonRpcProvider(chainInfo.rpcUrl);
+                const ethersSigner = new ethersModule.Wallet(privateKey, provider);
+                const contract = new ethersModule.Contract(facilitatorContractAddress, facilitatorAbi, ethersSigner);
                 const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
                   recipient,
                   amountWei,
@@ -297,9 +339,7 @@ function createX402Client(config = {}) {
             }
           }
           if (!paymentResult && walletProvider) {
-            if (!ethers) {
-              throw new Error("ethers.js is required when using walletProvider. Please install: npm install ethers");
-            }
+            const ethersForWallet = await loadEthers();
             if (onPaymentStatus) {
               onPaymentStatus("Waiting for wallet approval...");
             }
@@ -308,8 +348,8 @@ function createX402Client(config = {}) {
               "function facilitateNativeTransfer(address recipient, uint256 amount) external payable"
             ];
             const signer = await walletProvider.getSigner();
-            const contract = new ethers.Contract(facilitatorContractAddress, facilitatorAbi, signer);
-            const amountWei = ethers.parseEther(amount.toString());
+            const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, signer);
+            const amountWei = ethersForWallet.parseEther(amount.toString());
             const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
               recipient,
               amountWei,
@@ -334,9 +374,7 @@ function createX402Client(config = {}) {
             };
           }
           if (!paymentResult && privateKey) {
-            if (!ethers) {
-              throw new Error("ethers.js is required when using privateKey. Please install: npm install ethers");
-            }
+            const ethersForPrivateKey = await loadEthers();
             if (onPaymentStatus) {
               onPaymentStatus("Processing payment with private key...");
             }
@@ -344,10 +382,10 @@ function createX402Client(config = {}) {
             const facilitatorAbi = [
               "function facilitateNativeTransfer(address recipient, uint256 amount) external payable"
             ];
-            const provider = new ethers.JsonRpcProvider(chainInfo.rpcUrl);
-            const wallet = new ethers.Wallet(privateKey, provider);
-            const contract = new ethers.Contract(facilitatorContractAddress, facilitatorAbi, wallet);
-            const amountWei = ethers.parseEther(amount.toString());
+            const provider = new ethersForPrivateKey.JsonRpcProvider(chainInfo.rpcUrl);
+            const wallet = new ethersForPrivateKey.Wallet(privateKey, provider);
+            const contract = new ethersForPrivateKey.Contract(facilitatorContractAddress, facilitatorAbi, wallet);
+            const amountWei = ethersForPrivateKey.parseEther(amount.toString());
             const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
               recipient,
               amountWei,

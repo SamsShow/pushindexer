@@ -1,27 +1,76 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
 import type { PaymentRequirements, PaymentProof, PaymentProcessorResponse, X402ClientConfig, ChainInfo } from './types';
 
-// Dynamic import for ethers (peer dependency)
-// Users must install ethers if using walletProvider
+// Lazy loading for peer dependencies (browser-compatible)
+// These are loaded on-demand when needed, not at module load time
 let ethers: any;
-try {
-  // Try CommonJS require first
-  if (typeof require !== 'undefined') {
-    ethers = require('ethers');
+let ethersPromise: Promise<any> | null = null;
+
+async function loadEthers(): Promise<any> {
+  if (ethers) {
+    return ethers;
   }
-} catch {
-  // ethers not available - will throw error if walletProvider is used
+  
+  if (ethersPromise) {
+    return ethersPromise;
+  }
+
+  ethersPromise = (async () => {
+    try {
+      // Try dynamic import (works in both ESM and browser environments)
+      const ethersModule = await import('ethers');
+      ethers = ethersModule.default || ethersModule;
+      return ethers;
+    } catch (error) {
+      // Fallback to require for Node.js CommonJS environments
+      if (typeof require !== 'undefined') {
+        try {
+          ethers = require('ethers');
+          return ethers;
+        } catch {
+          // ethers not available
+        }
+      }
+      throw new Error('ethers.js is not available. Please install it: npm install ethers');
+    }
+  })();
+
+  return ethersPromise;
 }
 
-// Dynamic import for Push Chain SDK (peer dependency)
-// Users must install @pushchain/core if using Universal Signer
 let PushChain: any;
-try {
-  if (typeof require !== 'undefined') {
-    PushChain = require('@pushchain/core');
+let pushChainPromise: Promise<any> | null = null;
+
+async function loadPushChain(): Promise<any> {
+  if (PushChain) {
+    return PushChain;
   }
-} catch {
-  // Push Chain SDK not available - will fallback to ethers.js
+  
+  if (pushChainPromise) {
+    return pushChainPromise;
+  }
+
+  pushChainPromise = (async () => {
+    try {
+      // Try dynamic import (works in both ESM and browser environments)
+      const pushChainModule = await import('@pushchain/core');
+      PushChain = pushChainModule.default || pushChainModule;
+      return PushChain;
+    } catch (error) {
+      // Fallback to require for Node.js CommonJS environments
+      if (typeof require !== 'undefined') {
+        try {
+          PushChain = require('@pushchain/core');
+          return PushChain;
+        } catch {
+          // Push Chain SDK not available
+        }
+      }
+      return null; // Push Chain is optional, return null if not available
+    }
+  })();
+
+  return pushChainPromise;
 }
 
 /**
@@ -133,13 +182,14 @@ async function createUniversalSignerFromEthers(
   ethersSigner: any,
   rpcUrl: string
 ): Promise<any | null> {
-  if (!PushChain || !PushChain.utils || !PushChain.utils.signer) {
+  const PushChainModule = await loadPushChain();
+  if (!PushChainModule || !PushChainModule.utils || !PushChainModule.utils.signer) {
     return null;
   }
 
   try {
     // Create Universal Signer from ethers signer
-    const universalSigner = await PushChain.utils.signer.toUniversal(ethersSigner);
+    const universalSigner = await PushChainModule.utils.signer.toUniversal(ethersSigner);
     return universalSigner;
   } catch (error) {
     console.warn('Failed to create Universal Signer, falling back to ethers.js:', error);
@@ -254,11 +304,15 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
           // Detect chain information from payment requirements
           const chainInfo = detectChainInfo(paymentRequirements, config);
 
+          // Load peer dependencies lazily when needed
+          const PushChainModule = walletProvider || privateKey ? await loadPushChain() : null;
+          const ethersModule = walletProvider || privateKey ? await loadEthers() : null;
+
           let paymentResult: PaymentProcessorResponse | undefined;
 
           // Option 1: Use Universal Signer (multi-chain support, highest priority)
           // Universal Signer is a core component for Push Chain - try to use it when available
-          if (providedUniversalSigner || (PushChain && PushChain.utils && PushChain.utils.signer && (walletProvider || privateKey))) {
+          if (providedUniversalSigner || (PushChainModule && PushChainModule.utils && PushChainModule.utils.signer && (walletProvider || privateKey))) {
             try {
               if (onPaymentStatus) {
                 onPaymentStatus('Using Universal Signer for multi-chain transaction...');
@@ -267,7 +321,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               let universalSigner = providedUniversalSigner;
               
               // Create Universal Signer from walletProvider if not provided
-              if (!universalSigner && walletProvider && ethers && PushChain && PushChain.utils && PushChain.utils.signer) {
+              if (!universalSigner && walletProvider && ethersModule && PushChainModule && PushChainModule.utils && PushChainModule.utils.signer) {
                 if (onPaymentStatus) {
                   onPaymentStatus('Creating Universal Signer from wallet provider...');
                 }
@@ -275,17 +329,17 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
                 // Note: Universal Signer will use the provider's RPC, so we need to ensure
                 // the wallet provider is connected to the correct chain
                 const chainSigner = await walletProvider.getSigner();
-                universalSigner = await PushChain.utils.signer.toUniversal(chainSigner);
+                universalSigner = await PushChainModule.utils.signer.toUniversal(chainSigner);
               }
               
               // Create Universal Signer from privateKey if not provided
-              if (!universalSigner && privateKey && ethers && PushChain && PushChain.utils && PushChain.utils.signer) {
+              if (!universalSigner && privateKey && ethersModule && PushChainModule && PushChainModule.utils && PushChainModule.utils.signer) {
                 if (onPaymentStatus) {
                   onPaymentStatus('Creating Universal Signer from private key...');
                 }
-                const provider = new ethers.JsonRpcProvider(chainInfo.rpcUrl);
-                const ethersSigner = new ethers.Wallet(privateKey, provider);
-                universalSigner = await PushChain.utils.signer.toUniversal(ethersSigner);
+                const provider = new ethersModule.JsonRpcProvider(chainInfo.rpcUrl);
+                const ethersSigner = new ethersModule.Wallet(privateKey, provider);
+                universalSigner = await PushChainModule.utils.signer.toUniversal(ethersSigner);
               }
 
               if (!universalSigner) {
@@ -296,7 +350,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               // Universal Signer wraps ethers signers and provides a unified interface
               // When wrapping ethers signers, we can access the underlying signer's sendTransaction
               const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
-              const amountWei = ethers ? ethers.parseEther(amount.toString()) : BigInt(Number(amount) * 1e18);
+              const amountWei = ethersModule ? ethersModule.parseEther(amount.toString()) : BigInt(Number(amount) * 1e18);
 
               // Prepare transaction data
               const facilitatorAbi = [
@@ -304,7 +358,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               ];
               
               // Encode function call
-              const iface = ethers ? new ethers.Interface(facilitatorAbi) : null;
+              const iface = ethersModule ? new ethersModule.Interface(facilitatorAbi) : null;
               const data = iface ? iface.encodeFunctionData('facilitateNativeTransfer', [recipient, amountWei]) : '0x';
 
               // Universal Signer wraps ethers signers
@@ -321,7 +375,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
                   data: data,
                 };
                 txResult = await universalSigner.sendTransaction(txRequest);
-              } else if (walletProvider && ethers) {
+              } else if (walletProvider && ethersModule) {
                 // If Universal Signer doesn't expose sendTransaction, use the original walletProvider
                 // This maintains Universal Signer's chain detection benefits while using ethers directly
                 // Universal Signer is still used for multi-chain support and chain detection
@@ -329,7 +383,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
                   onPaymentStatus('Universal Signer: Using underlying wallet provider for transaction...');
                 }
                 const signer = await walletProvider.getSigner();
-                const contract = new ethers.Contract(facilitatorContractAddress, facilitatorAbi, signer);
+                const contract = new ethersModule.Contract(facilitatorContractAddress, facilitatorAbi, signer);
                 
                 // Estimate gas
                 const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
@@ -353,14 +407,14 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
                   chainId: typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString(),
                   blockNumber: receipt.blockNumber,
                 };
-              } else if (privateKey && ethers) {
+              } else if (privateKey && ethersModule) {
                 // Use privateKey with Universal Signer's chain detection
                 if (onPaymentStatus) {
                   onPaymentStatus('Using private key with Universal Signer chain detection...');
                 }
-                const provider = new ethers.JsonRpcProvider(chainInfo.rpcUrl);
-                const ethersSigner = new ethers.Wallet(privateKey, provider);
-                const contract = new ethers.Contract(facilitatorContractAddress, facilitatorAbi, ethersSigner);
+                const provider = new ethersModule.JsonRpcProvider(chainInfo.rpcUrl);
+                const ethersSigner = new ethersModule.Wallet(privateKey, provider);
+                const contract = new ethersModule.Contract(facilitatorContractAddress, facilitatorAbi, ethersSigner);
                 
                 const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
                   recipient,
@@ -433,9 +487,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
 
           // Option 2: Use wallet provider (browser/client-side) - fallback if Universal Signer not available
           if (!paymentResult && walletProvider) {
-            if (!ethers) {
-              throw new Error('ethers.js is required when using walletProvider. Please install: npm install ethers');
-            }
+            const ethersForWallet = await loadEthers();
 
             if (onPaymentStatus) {
               onPaymentStatus('Waiting for wallet approval...');
@@ -449,8 +501,8 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
 
             // Get signer from wallet provider
             const signer = await walletProvider.getSigner();
-            const contract = new ethers.Contract(facilitatorContractAddress, facilitatorAbi, signer);
-            const amountWei = ethers.parseEther(amount.toString());
+            const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, signer);
+            const amountWei = ethersForWallet.parseEther(amount.toString());
 
             // Estimate gas
             const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
@@ -484,9 +536,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
           }
           // Option 3: Use private key directly with facilitator contract (agents/server-side)
           if (!paymentResult && privateKey) {
-            if (!ethers) {
-              throw new Error('ethers.js is required when using privateKey. Please install: npm install ethers');
-            }
+            const ethersForPrivateKey = await loadEthers();
 
             if (onPaymentStatus) {
               onPaymentStatus('Processing payment with private key...');
@@ -499,10 +549,10 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
             ];
 
             // Create provider and wallet from private key
-            const provider = new ethers.JsonRpcProvider(chainInfo.rpcUrl);
-            const wallet = new ethers.Wallet(privateKey, provider);
-            const contract = new ethers.Contract(facilitatorContractAddress, facilitatorAbi, wallet);
-            const amountWei = ethers.parseEther(amount.toString());
+            const provider = new ethersForPrivateKey.JsonRpcProvider(chainInfo.rpcUrl);
+            const wallet = new ethersForPrivateKey.Wallet(privateKey, provider);
+            const contract = new ethersForPrivateKey.Contract(facilitatorContractAddress, facilitatorAbi, wallet);
+            const amountWei = ethersForPrivateKey.parseEther(amount.toString());
 
             // Estimate gas
             const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
