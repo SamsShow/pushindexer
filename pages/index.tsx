@@ -6,12 +6,43 @@ export default function Home() {
         A complete implementation of the x402 Payment Protocol for Push Chain
       </p>
       
+      <div style={{ marginTop: '2rem', marginBottom: '2rem' }}>
+        <a 
+          href="/demo" 
+          style={{
+            display: 'inline-block',
+            padding: '16px 32px',
+            background: '#ec4899',
+            color: '#fff',
+            textDecoration: 'none',
+            borderRadius: '8px',
+            fontWeight: '600',
+            fontSize: '18px',
+            transition: 'all 0.2s',
+            boxShadow: '0 2px 4px rgba(236, 72, 153, 0.2)'
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.background = '#db2777';
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 4px 8px rgba(236, 72, 153, 0.3)';
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.background = '#ec4899';
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 2px 4px rgba(236, 72, 153, 0.2)';
+          }}
+        >
+          Try the Demo →
+        </a>
+      </div>
+
       <div style={{ marginTop: '2rem' }}>
         <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Available APIs</h2>
         <ul style={{ lineHeight: '1.8' }}>
           <li><strong>Facilitator API:</strong> <code>/api/facilitator/info</code></li>
           <li><strong>Indexer API:</strong> <code>/api/indexer/tx?hash=0x...</code></li>
           <li><strong>Payment API:</strong> <code>/api/payment/process</code></li>
+          <li><strong>Protected Resource:</strong> <code>/api/protected/weather</code> (returns 402)</li>
         </ul>
       </div>
 
