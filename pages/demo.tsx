@@ -14,15 +14,13 @@ interface PaymentState {
     apiProcessing: number;
   };
   paymentStatus?: string;
-  indexerData?: any;
   facilitatorInfo?: any;
   paymentMethod?: 'server-side' | 'universal-signer';
 }
 
-// Hardcoded public facilitator and indexer endpoints
+// Hardcoded public facilitator endpoint
 const PUBLIC_FACILITATOR_ADDRESS = '0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7';
 const FACILITATOR_API = 'https://pushindexer.vercel.app/api/facilitator/info';
-const INDEXER_API = 'https://pushindexer.vercel.app/api/indexer';
 
 export default function Demo() {
   const [paymentState, setPaymentState] = useState<PaymentState>({ status: 'idle' });
@@ -95,21 +93,10 @@ export default function Demo() {
         }
       }
 
-      // Fetch facilitator info and indexer data if we have a transaction hash
-      let indexerData = null;
+      // Fetch facilitator info if we have a transaction hash
       let facilitatorInfo = null;
 
       if (txHash) {
-        try {
-          // Fetch indexer data
-          const indexerResponse = await fetch(`${INDEXER_API}/tx?hash=${txHash}`);
-          if (indexerResponse.ok) {
-            indexerData = await indexerResponse.json();
-          }
-        } catch (error) {
-          console.warn('Failed to fetch indexer data:', error);
-        }
-
         try {
           // Fetch facilitator info
           const facilitatorResponse = await fetch(FACILITATOR_API);
@@ -131,7 +118,6 @@ export default function Demo() {
           apiProcessing: apiProcessingTime,
         },
         txHash,
-        indexerData,
         facilitatorInfo,
         paymentMethod: useUniversalSigner ? 'universal-signer' : 'server-side',
       });
@@ -478,114 +464,37 @@ export default function Demo() {
         </div>
       </div>
 
-      {/* Indexer Information Section */}
-      {paymentState.status === 'success' && paymentState.txHash && (
+      {/* Facilitator Information Section */}
+      {paymentState.status === 'success' && paymentState.facilitatorInfo && (
         <div className="panel" style={{ marginTop: '30px' }}>
-          <h2>Indexer Information</h2>
+          <h2>Facilitator Contract Info</h2>
           
-          {paymentState.indexerData ? (
-            <>
-              <div className="status-section">
-                <div className="info-item">
-                  <div className="info-label">Transaction Hash</div>
-                  <div className="info-value">{paymentState.indexerData.transaction?.txHash || paymentState.txHash}</div>
-                </div>
-                
-                {paymentState.indexerData.transaction?.blockNumber && (
-                  <div className="info-item">
-                    <div className="info-label">Block Number</div>
-                    <div className="info-value">{paymentState.indexerData.transaction.blockNumber}</div>
-                  </div>
-                )}
-                
-                {paymentState.indexerData.transaction?.sender && (
-                  <div className="info-item">
-                    <div className="info-label">Sender</div>
-                    <div className="info-value" style={{ fontSize: '12px', wordBreak: 'break-all' }}>
-                      {paymentState.indexerData.transaction.sender}
-                    </div>
-                  </div>
-                )}
-                
-                {paymentState.indexerData.transaction?.target && (
-                  <div className="info-item">
-                    <div className="info-label">Target (Recipient)</div>
-                    <div className="info-value" style={{ fontSize: '12px', wordBreak: 'break-all' }}>
-                      {paymentState.indexerData.transaction.target}
-                    </div>
-                  </div>
-                )}
-                
-                {paymentState.indexerData.transaction?.value && (
-                  <div className="info-item">
-                    <div className="info-label">Value</div>
-                    <div className="info-value">
-                      {paymentState.indexerData.transaction.value} wei
-                    </div>
-                  </div>
-                )}
-                
-                {paymentState.indexerData.transaction?.status && (
-                  <div className="info-item">
-                    <div className="info-label">Status</div>
-                    <div className="info-value" style={{ 
-                      color: paymentState.indexerData.transaction.status === 'confirmed' ? '#10b981' : '#f59e0b'
-                    }}>
-                      {paymentState.indexerData.transaction.status}
-                    </div>
-                  </div>
-                )}
+          <div className="status-section">
+            <div className="info-item">
+              <div className="info-label">Contract Address</div>
+              <div className="info-value" style={{ fontSize: '12px', wordBreak: 'break-all' }}>
+                {paymentState.facilitatorInfo.contractAddress}
               </div>
-
-              {paymentState.indexerData.events && paymentState.indexerData.events.length > 0 && (
-                <div style={{ marginTop: '24px' }}>
-                  <h3 style={{ fontSize: '16px', marginBottom: '12px', color: '#ec4899', fontWeight: '600' }}>
-                    EVENTS
-                  </h3>
-                  <div className="json-viewer">
-                    {JSON.stringify(paymentState.indexerData.events, null, 2)}
-                  </div>
-                </div>
-              )}
-
-              <div style={{ marginTop: '24px' }}>
-                <h3 style={{ fontSize: '16px', marginBottom: '12px', color: '#ec4899', fontWeight: '600' }}>
-                  FULL TRANSACTION DATA
-                </h3>
-                <div className="json-viewer">
-                  {JSON.stringify(paymentState.indexerData.transaction, null, 2)}
-                </div>
-              </div>
-            </>
-          ) : (
-            <div style={{ textAlign: 'center', padding: '20px 0', color: '#6b7280' }}>
-              <p>Loading indexer data...</p>
             </div>
-          )}
-
-          {paymentState.facilitatorInfo && (
-            <div style={{ marginTop: '24px', padding: '16px', background: '#faf5f0', borderRadius: '6px', border: '1px solid #fce7f3' }}>
-              <h3 style={{ fontSize: '16px', marginBottom: '12px', color: '#ec4899', fontWeight: '600' }}>
-                Facilitator Contract Info
-              </h3>
+            <div className="info-item">
+              <div className="info-label">Chain ID</div>
+              <div className="info-value">{paymentState.facilitatorInfo.chainId}</div>
+            </div>
+            {paymentState.facilitatorInfo.totalFacilitated && (
               <div className="info-item">
-                <div className="info-label">Contract Address</div>
+                <div className="info-label">Total Facilitated</div>
+                <div className="info-value">{paymentState.facilitatorInfo.totalFacilitated} PUSH</div>
+              </div>
+            )}
+            {paymentState.facilitatorInfo.owner && (
+              <div className="info-item">
+                <div className="info-label">Owner</div>
                 <div className="info-value" style={{ fontSize: '12px', wordBreak: 'break-all' }}>
-                  {paymentState.facilitatorInfo.contractAddress}
+                  {paymentState.facilitatorInfo.owner}
                 </div>
               </div>
-              <div className="info-item">
-                <div className="info-label">Chain ID</div>
-                <div className="info-value">{paymentState.facilitatorInfo.chainId}</div>
-              </div>
-              {paymentState.facilitatorInfo.totalFacilitated && (
-                <div className="info-item">
-                  <div className="info-label">Total Facilitated</div>
-                  <div className="info-value">{paymentState.facilitatorInfo.totalFacilitated} PUSH</div>
-                </div>
-              )}
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 
