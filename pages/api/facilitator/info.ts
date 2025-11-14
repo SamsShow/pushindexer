@@ -15,9 +15,13 @@ const DEFAULT_CHAIN_ID = "42101";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Enable CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  try {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  } catch (e) {
+    // Continue if header setting fails
+  }
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -27,73 +31,86 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  // Always return basic facilitator info even if RPC calls fail
+  const contractAddress = process.env.FACILITATOR_CONTRACT_ADDRESS || DEFAULT_FACILITATOR_ADDRESS;
+  const chainId = process.env.PUSH_CHAIN_ID || DEFAULT_CHAIN_ID;
+
+  // Default response - always return this at minimum
+  const defaultResponse = {
+    contractAddress,
+    chainId: chainId.toString(),
+    network: "push",
+    owner: "0x0000000000000000000000000000000000000000",
+    totalFacilitated: "0.0",
+  };
+
   try {
     // Use environment variables with fallbacks
     const rpcUrl = process.env.PUSH_CHAIN_RPC_URL || DEFAULT_RPC_URL;
-    const contractAddress = process.env.FACILITATOR_CONTRACT_ADDRESS || DEFAULT_FACILITATOR_ADDRESS;
-    const chainId = process.env.PUSH_CHAIN_ID || DEFAULT_CHAIN_ID;
 
-    // Create provider with timeout
-    const provider = new ethers.JsonRpcProvider(rpcUrl, {
-      name: "push",
-      chainId: parseInt(chainId, 10),
-    });
-
-    // Set a timeout for RPC calls
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("RPC call timeout")), 10000); // 10 second timeout
-    });
-
-    const contract = new ethers.Contract(contractAddress, FACILITATOR_ABI, provider);
-
-    // Try to fetch data with fallbacks and timeout protection
-    let network: any = { chainId: BigInt(chainId), name: "push" };
-    let owner: string = "0x0000000000000000000000000000000000000000";
-    let totalFacilitated: bigint = BigInt(0);
-
+    // Try to fetch live data, but don't fail if it doesn't work
     try {
-      network = await Promise.race([
-        provider.getNetwork(),
-        timeoutPromise,
-      ]) as any;
-    } catch (error) {
-      console.warn("Failed to get network, using chainId from env:", error);
-      network = { chainId: BigInt(chainId), name: "push" };
-    }
+      // Create provider with timeout
+      const provider = new ethers.JsonRpcProvider(rpcUrl, {
+        name: "push",
+        chainId: parseInt(chainId, 10),
+      });
 
-    try {
-      owner = await Promise.race([
-        contract.owner(),
-        timeoutPromise,
-      ]) as string;
-    } catch (error) {
-      console.warn("Failed to get owner:", error);
-      owner = "0x0000000000000000000000000000000000000000";
-    }
+      // Set a timeout for RPC calls
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("RPC call timeout")), 5000); // 5 second timeout
+      });
 
-    try {
-      totalFacilitated = await Promise.race([
-        contract.totalFacilitated(),
-        timeoutPromise,
-      ]) as bigint;
-    } catch (error) {
-      console.warn("Failed to get totalFacilitated:", error);
-      totalFacilitated = BigInt(0);
-    }
+      const contract = new ethers.Contract(contractAddress, FACILITATOR_ABI, provider);
 
-    return res.status(200).json({
-      contractAddress,
-      chainId: network.chainId?.toString() || chainId,
-      owner: owner || "0x0000000000000000000000000000000000000000",
-      totalFacilitated: ethers.formatEther(totalFacilitated || BigInt(0)),
-      network: network.name || "push",
-    });
+      // Try to fetch data with fallbacks and timeout protection
+      let network: any = { chainId: BigInt(chainId), name: "push" };
+      let owner: string = defaultResponse.owner;
+      let totalFacilitated: bigint = BigInt(0);
+
+      try {
+        network = await Promise.race([
+          provider.getNetwork(),
+          timeoutPromise,
+        ]) as any;
+      } catch (error) {
+        // Use defaults
+      }
+
+      try {
+        owner = await Promise.race([
+          contract.owner(),
+          timeoutPromise,
+        ]) as string;
+      } catch (error) {
+        // Use defaults
+      }
+
+      try {
+        totalFacilitated = await Promise.race([
+          contract.totalFacilitated(),
+          timeoutPromise,
+        ]) as bigint;
+      } catch (error) {
+        // Use defaults
+      }
+
+      return res.status(200).json({
+        contractAddress,
+        chainId: network.chainId?.toString() || chainId,
+        owner: owner || defaultResponse.owner,
+        totalFacilitated: ethers.formatEther(totalFacilitated || BigInt(0)),
+        network: network.name || "push",
+      });
+    } catch (rpcError) {
+      // If RPC fails, return default response
+      console.warn("RPC call failed, returning default facilitator info:", rpcError);
+      return res.status(200).json(defaultResponse);
+    }
   } catch (error: any) {
-    console.error("Error fetching contract info:", error);
-    return res.status(500).json({
-      error: "Failed to fetch contract info",
-      message: error.message || "Unknown error",
-    });
+    // Even if everything fails, return basic info
+    console.error("Error in facilitator endpoint:", error);
+    return res.status(200).json(defaultResponse);
   }
 }
 
