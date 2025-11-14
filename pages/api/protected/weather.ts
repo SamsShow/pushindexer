@@ -5,6 +5,16 @@ const DEFAULT_SELLER_ADDRESS = "0x0dFd63e8b357eD75D502bb42F6e4eC63E2D84761";
 const DEFAULT_FACILITATOR_ADDRESS = "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7";
 const DEFAULT_CHAIN_ID = 42101;
 
+// Explicitly set runtime for Vercel
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '1mb',
+    },
+  },
+  runtime: 'nodejs',
+};
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
