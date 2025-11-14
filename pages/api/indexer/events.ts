@@ -1,4 +1,5 @@
-import pg from "pg";
+// Use require for pg to avoid ESM/CommonJS issues on Vercel
+const pg = require("pg");
 import type { NextApiRequest, NextApiResponse } from "next";
 
 const { Pool } = pg;

@@ -6,6 +6,18 @@ const nextConfig = {
   experimental: {
     serverComponentsExternalPackages: ['pg', '@pushchain/core'],
   },
+  // Ensure API routes are properly compiled
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      // Ensure proper module resolution for serverless functions
+      config.resolve = config.resolve || {};
+      config.resolve.extensionAlias = {
+        '.js': ['.ts', '.tsx', '.js', '.jsx'],
+        '.jsx': ['.tsx', '.jsx'],
+      };
+    }
+    return config;
+  },
 }
 
 export default nextConfig
