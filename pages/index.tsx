@@ -8,7 +8,9 @@ export default function Home() {
       
       <div style={{ marginTop: '2rem', marginBottom: '2rem' }}>
         <a 
-          href="/demo" 
+          href="https://pushtest-alpha.vercel.app/demo" 
+          target="_blank"
+          rel="noopener noreferrer"
           style={{
             display: 'inline-block',
             padding: '16px 32px',
@@ -49,10 +51,10 @@ export default function Home() {
       <div style={{ marginTop: '2rem', padding: '1rem', backgroundColor: '#f5f5f5', borderRadius: '8px' }}>
         <h3 style={{ marginTop: '0' }}>SDK Installation</h3>
         <pre style={{ backgroundColor: '#fff', padding: '1rem', borderRadius: '4px', overflow: 'auto' }}>
-{`npm install @pushchain/x402-sdk axios`}
+{`npm install push-x402 axios`}
         </pre>
         <p style={{ marginTop: '1rem', marginBottom: '0' }}>
-          See <a href="https://www.npmjs.com/package/@pushchain/x402-sdk" target="_blank" rel="noopener noreferrer">@pushchain/x402-sdk</a> for documentation.
+          See <a href="https://www.npmjs.com/package/push-x402?activeTab=readme" target="_blank" rel="noopener noreferrer">push-x402</a> for documentation.
         </p>
       </div>
     </div>
