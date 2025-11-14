@@ -1,5 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { config } from "../../../src/config/index";
+
+// Hardcoded defaults for Vercel serverless compatibility
+const DEFAULT_SELLER_ADDRESS = "0x0dFd63e8b357eD75D502bb42F6e4eC63E2D84761";
+const DEFAULT_FACILITATOR_ADDRESS = "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7";
+const DEFAULT_CHAIN_ID = 42101;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Enable CORS
@@ -22,14 +26,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (!paymentHeader) {
     // Return 402 Payment Required with payment specification
+    // Use environment variables with fallbacks for Vercel compatibility
+    const sellerAddress = process.env.SELLER_WALLET_ADDRESS || DEFAULT_SELLER_ADDRESS;
+    const facilitatorAddress = process.env.FACILITATOR_CONTRACT_ADDRESS || DEFAULT_FACILITATOR_ADDRESS;
+    const chainId = parseInt(process.env.PUSH_CHAIN_ID || String(DEFAULT_CHAIN_ID), 10);
+    
     return res.status(402).json({
       scheme: "exact",
       amount: "0.001",
       currency: "PUSH",
-      recipient: config.pushChain.sellerAddress || "0x0dFd63e8b357eD75D502bb42F6e4eC63E2D84761",
-      facilitator: config.pushChain.facilitatorAddress || "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7",
+      recipient: sellerAddress,
+      facilitator: facilitatorAddress,
       network: "push",
-      chainId: config.pushChain.chainId || 42101,
+      chainId: chainId,
     });
   }
 
