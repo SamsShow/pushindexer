@@ -21,15 +21,34 @@ npm install push-x402 axios ethers @pushchain/core
 
 ### For Buyers: Using the SDK
 
-**That's it!** No configuration needed. The SDK uses the public facilitator API by default.
+The SDK calls the facilitator contract directly - no serverless API required! Choose your payment method:
 
+**Option 1: Browser with Wallet (Recommended for client-side)**
+```typescript
+import { ethers } from 'ethers';
+import { createX402Client } from 'push-x402';
+
+// Connect to user's wallet
+const provider = new ethers.BrowserProvider(window.ethereum);
+const client = createX402Client({
+  walletProvider: provider,
+});
+
+// Make requests - user will approve transactions in their wallet
+const response = await client.get('https://api.example.com/protected/resource');
+console.log(response.data);
+```
+
+**Option 2: Server-side with Private Key (Recommended for agents)**
 ```typescript
 import { createX402Client } from 'push-x402';
 
-// Create client (works exactly like axios)
-const client = createX402Client();
+// ⚠️ Only use in secure server-side environments!
+const client = createX402Client({
+  privateKey: process.env.PRIVATE_KEY, // Calls facilitator contract directly
+});
 
-// Make requests to protected endpoints - payments are handled automatically!
+// Transactions happen automatically - perfect for agents!
 const response = await client.get('https://api.example.com/protected/resource');
 console.log(response.data);
 ```
@@ -222,8 +241,17 @@ interface X402ClientConfig {
   onPaymentStatus?: (status: string) => void;
   
   /**
-   * Optional: Override public facilitator API endpoint
-   * Default: https://pushindexer.vercel.app/api/payment/process
+   * Optional: Custom payment endpoint for server-side processing
+   * If not provided, SDK will use direct facilitator contract calls (walletProvider/privateKey/universalSigner)
+   * Only use this if you have your own payment processing server
+   * 
+   * @example
+   * ```typescript
+   * // Use your own server endpoint
+   * const client = createX402Client({ 
+   *   paymentEndpoint: 'https://your-server.com/api/payment/process' 
+   * });
+   * ```
    */
   paymentEndpoint?: string;
   
@@ -290,11 +318,13 @@ interface X402ClientConfig {
 
 ### Defaults
 
-The SDK uses these defaults (no configuration needed):
+The SDK uses these defaults:
 
-- **Payment Endpoint**: `https://pushindexer.vercel.app/api/payment/process`
-- **Facilitator Address**: `0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7`
+- **Facilitator Address**: `0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7` (Push Chain facilitator contract)
 - **Chain ID**: `42101` (Push Chain testnet)
+- **Payment Endpoint**: None (SDK calls facilitator contract directly)
+
+**Note:** You must provide one of: `walletProvider`, `privateKey`, `universalSigner`, or `paymentEndpoint` for payments to work.
 
 ---
 
@@ -305,12 +335,12 @@ The SDK uses these defaults (no configuration needed):
 3. **SDK automatically**:
    - Detects the 402 response
    - Validates payment requirements
-   - Calls the public facilitator API to process payment
+   - **Calls the facilitator contract directly** (no serverless API needed!)
    - Creates payment proof with transaction hash
    - Retries your original request with payment proof
 4. **Server verifies payment** and returns the protected resource
 
-**You don't need to do anything** - it's all automatic! 🎉
+**The SDK calls the facilitator contract on-chain directly** - no intermediate API layer required! 🎉
 
 ---
 
@@ -507,7 +537,7 @@ const response = await client.get('/protected/resource');
 
 #### Option 2: Private Key (Agents/Server-Side) ⚡
 
-Perfect for automated agents and server-side applications. Transactions are signed automatically.
+Perfect for automated agents and server-side applications. **Calls facilitator contract directly** - no API needed!
 
 ```typescript
 // ⚠️ WARNING: Only use private keys in secure server-side environments!
@@ -521,7 +551,7 @@ const client = createX402Client({
   },
 });
 
-// Transactions happen automatically - perfect for agents!
+// SDK calls facilitator contract directly - transactions happen automatically!
 const response = await client.get('/protected/resource');
 ```
 
@@ -531,6 +561,12 @@ const response = await client.get('/protected/resource');
 - ✅ Background jobs and scheduled tasks
 - ✅ Testing and development
 
+**How it works:**
+- ✅ SDK creates wallet from private key
+- ✅ Calls facilitator contract `facilitateNativeTransfer()` directly
+- ✅ No serverless API dependency
+- ✅ Works completely offline (just needs RPC connection)
+
 **Security:**
 - ✅ Always use environment variables
 - ✅ Never commit private keys to git
@@ -538,7 +574,7 @@ const response = await client.get('/protected/resource');
 
 #### Option 3: Wallet Provider (Browser/Client-Side) 🔐
 
-Perfect for browser applications. Users approve transactions in their wallet (MetaMask, WalletConnect, etc.).
+Perfect for browser applications. **Calls facilitator contract directly** - users approve transactions in their wallet.
 
 ```typescript
 import { ethers } from 'ethers';
@@ -554,7 +590,7 @@ const client = createX402Client({
   },
 });
 
-// User will be prompted to approve transaction in their wallet
+// SDK calls facilitator contract directly - user approves in wallet
 const response = await client.get('/protected/resource');
 ```
 
@@ -564,28 +600,36 @@ const response = await client.get('/protected/resource');
 - ✅ DApps and DeFi applications
 - ✅ When users want wallet control
 
+**How it works:**
+- ✅ SDK gets signer from wallet provider
+- ✅ Calls facilitator contract `facilitateNativeTransfer()` directly
+- ✅ User approves transaction in their wallet
+- ✅ No serverless API dependency
+
 **Requirements:**
 - Install ethers: `npm install ethers`
 - User must have a wallet extension (MetaMask, etc.)
 
-#### Option 4: Public Endpoint (Server-Side Setup)
+#### Option 4: Custom Payment Endpoint (Optional)
 
-Use the public facilitator endpoint with your own server-side private key setup.
+Only use this if you have your own payment processing server. Otherwise, use direct contract calls (Options 1-3).
 
 ```typescript
-// No private key or wallet provider needed
-// Your server must have BUYER_PRIVATE_KEY environment variable set
+// Use your own payment processing endpoint
 const client = createX402Client({
   baseURL: 'https://api.example.com',
+  paymentEndpoint: 'https://your-server.com/api/payment/process',
 });
 
 const response = await client.get('/protected/resource');
 ```
 
 **Use Cases:**
-- ✅ When you've set up your own payment processor
-- ✅ Server-side with environment variables
-- ✅ Shared payment infrastructure
+- ✅ When you have your own payment processing server
+- ✅ Custom payment infrastructure
+- ✅ Legacy systems integration
+
+**Note:** Direct facilitator contract calls (Options 1-3) are recommended - no serverless dependency!
 
 ### Payment Status Callback
 
@@ -619,7 +663,11 @@ const client = createX402Client({
 1. ✅ **Use baseURL** for cleaner code
 2. ✅ **Handle errors gracefully** - show user-friendly messages
 3. ✅ **Use payment status callback** for better UX
-4. ✅ **Don't expose private keys** - payment processing is server-side
+4. ✅ **Choose the right payment method**:
+   - Browser apps → `walletProvider`
+   - Server-side/agents → `privateKey`
+   - Multi-chain → `universalSigner`
+5. ✅ **Don't expose private keys** - only use in secure server-side environments
 
 ### For Sellers
 
@@ -635,9 +683,11 @@ const client = createX402Client({
 
 ### Payment Processing Fails
 
-- ✅ Check that the public facilitator API is accessible
+- ✅ Verify you provided one of: `walletProvider`, `privateKey`, `universalSigner`, or `paymentEndpoint`
+- ✅ Check that ethers.js is installed if using `walletProvider` or `privateKey`
 - ✅ Verify your wallet has sufficient balance
-- ✅ Check network connectivity
+- ✅ Check network connectivity and RPC endpoint
+- ✅ Ensure facilitator contract address is correct
 
 ### 402 Response Not Handled
 
