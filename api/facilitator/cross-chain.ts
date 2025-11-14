@@ -3,7 +3,7 @@
 const ethers = require("ethers");
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-const FACILITATOR_ABI = [
+const CROSS_CHAIN_FACILITATOR_ABI = [
   "function facilitateCrossChain(address target, uint256 value, bytes calldata data) external payable",
 ];
 
@@ -33,7 +33,7 @@ module.exports = async function handler(req: VercelRequest, res: VercelResponse)
 
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     const wallet = new ethers.Wallet(privateKey, provider);
-    const contract = new ethers.Contract(contractAddress, FACILITATOR_ABI, wallet);
+    const contract = new ethers.Contract(contractAddress, CROSS_CHAIN_FACILITATOR_ABI, wallet);
 
     const valueWei = ethers.parseEther(value.toString());
     const callData = data || "0x";
@@ -65,7 +65,4 @@ module.exports = async function handler(req: VercelRequest, res: VercelResponse)
     });
   }
 }
-
-// Make this file a module to avoid TypeScript scope conflicts
-export {};
 

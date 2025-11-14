@@ -3,7 +3,7 @@
 const ethers = require("ethers");
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-const FACILITATOR_ABI = [
+const INFO_FACILITATOR_ABI = [
   "function owner() view returns (address)",
   "function totalFacilitated() view returns (uint256)",
   "function facilitatedByAddress(address) view returns (uint256)",
@@ -23,7 +23,7 @@ module.exports = async function handler(req: VercelRequest, res: VercelResponse)
     }
 
     const provider = new ethers.JsonRpcProvider(rpcUrl);
-    const contract = new ethers.Contract(contractAddress, FACILITATOR_ABI, provider);
+    const contract = new ethers.Contract(contractAddress, INFO_FACILITATOR_ABI, provider);
     const network = await provider.getNetwork();
 
     const [owner, totalFacilitated] = await Promise.all([
@@ -46,7 +46,4 @@ module.exports = async function handler(req: VercelRequest, res: VercelResponse)
     });
   }
 }
-
-// Make this file a module to avoid TypeScript scope conflicts
-export {};
 
