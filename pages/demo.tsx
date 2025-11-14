@@ -15,7 +15,7 @@ interface PaymentState {
   };
   paymentStatus?: string;
   facilitatorInfo?: any;
-  paymentMethod?: 'server-side' | 'universal-signer';
+  paymentMethod?: 'server-side' | 'universal-signer' | 'browser-wallet';
 }
 
 // Hardcoded public facilitator address
@@ -26,29 +26,96 @@ export default function Demo() {
   const [paymentState, setPaymentState] = useState<PaymentState>({ status: 'idle' });
   const [paymentStatus, setPaymentStatus] = useState<string>('');
   const [useUniversalSigner, setUseUniversalSigner] = useState<boolean>(false);
+  const [useBrowserWallet, setUseBrowserWallet] = useState<boolean>(false);
+  const [walletConnected, setWalletConnected] = useState<boolean>(false);
+  const [ethersAvailable, setEthersAvailable] = useState<boolean>(false);
+  const [isMounted, setIsMounted] = useState<boolean>(false);
+  const [hasEthereum, setHasEthereum] = useState<boolean>(false);
+
+  // Set mounted state after hydration to avoid SSR mismatch
+  useEffect(() => {
+    setIsMounted(true);
+    setHasEthereum(typeof window !== 'undefined' && !!(window as any).ethereum);
+  }, []);
+
+  // Check if ethers is available (browser-compatible dynamic import)
+  useEffect(() => {
+    if (isMounted && useBrowserWallet) {
+      import('ethers').then((ethersModule) => {
+        setEthersAvailable(true);
+      }).catch(() => {
+        setEthersAvailable(false);
+      });
+    }
+  }, [useBrowserWallet, isMounted]);
 
   useEffect(() => {
     // Initialize x402 client
-    // Payment endpoint will be determined by useUniversalSigner toggle
-    const paymentEndpoint = useUniversalSigner 
-      ? '/api/payment/process-universal' 
-      : '/api/payment/process';
-    
-    const client = createX402Client({
-      baseURL: typeof window !== 'undefined' ? window.location.origin : '',
-      paymentEndpoint,
-      facilitatorAddress: PUBLIC_FACILITATOR_ADDRESS,
-      chainId: 42101,
-      onPaymentStatus: (status: string) => {
-        setPaymentStatus(status);
-      },
-    });
+    // Browser-compatible SDK now uses dynamic imports internally
+    const initClient = async () => {
+      let client;
+      
+      if (useBrowserWallet && isMounted && hasEthereum && ethersAvailable) {
+        // Use browser wallet provider (demonstrates browser compatibility)
+        try {
+          // Dynamic import for ethers (browser-compatible)
+          const ethersModule = await import('ethers');
+          const ethers = ethersModule.default || ethersModule;
+          const provider = new ethers.BrowserProvider((window as any).ethereum);
+          client = createX402Client({
+            baseURL: isMounted ? window.location.origin : '',
+            walletProvider: provider, // SDK will use dynamic imports internally
+            facilitatorAddress: PUBLIC_FACILITATOR_ADDRESS,
+            chainId: 42101,
+            onPaymentStatus: (status: string) => {
+              setPaymentStatus(status);
+            },
+          });
+          setWalletConnected(true);
+        } catch (error) {
+          console.error('Failed to connect wallet:', error);
+          setWalletConnected(false);
+          // Fallback to payment endpoint
+          const paymentEndpoint = useUniversalSigner 
+            ? '/api/payment/process-universal' 
+            : '/api/payment/process';
+          client = createX402Client({
+            baseURL: isMounted ? window.location.origin : '',
+            paymentEndpoint,
+            facilitatorAddress: PUBLIC_FACILITATOR_ADDRESS,
+            chainId: 42101,
+            onPaymentStatus: (status: string) => {
+              setPaymentStatus(status);
+            },
+          });
+        }
+      } else {
+        // Use payment endpoint (server-side processing)
+        const paymentEndpoint = useUniversalSigner 
+          ? '/api/payment/process-universal' 
+          : '/api/payment/process';
+        client = createX402Client({
+          baseURL: isMounted ? window.location.origin : '',
+          paymentEndpoint,
+          facilitatorAddress: PUBLIC_FACILITATOR_ADDRESS,
+          chainId: 42101,
+          onPaymentStatus: (status: string) => {
+            setPaymentStatus(status);
+          },
+        });
+        setWalletConnected(false);
+      }
 
-    // Store client for use in button click
-    if (typeof window !== 'undefined') {
-      (window as any).x402Client = client;
+      // Store client for use in button click
+      if (isMounted) {
+        (window as any).x402Client = client;
+      }
+    };
+
+    if (isMounted) {
+      initClient();
     }
-  }, [useUniversalSigner]);
+  }, [useUniversalSigner, useBrowserWallet, ethersAvailable, isMounted, hasEthereum]);
 
   const handleRequest = async () => {
     setPaymentState({ status: 'loading' });
@@ -111,7 +178,7 @@ export default function Demo() {
         },
         txHash,
         facilitatorInfo,
-        paymentMethod: useUniversalSigner ? 'universal-signer' : 'server-side',
+        paymentMethod: useBrowserWallet ? 'browser-wallet' : (useUniversalSigner ? 'universal-signer' : 'server-side'),
       });
       setPaymentStatus('Payment successful!');
     } catch (error: any) {
@@ -264,18 +331,35 @@ export default function Demo() {
                 This demo will test the x402 payment flow by making a request to a protected resource.
                 The x402 SDK will automatically handle the payment when a 402 response is received.
               </p>
-              <div style={{ 
-                padding: '12px', 
-                background: '#d1fae5', 
-                border: '1px solid #6ee7b7', 
-                borderRadius: '6px',
-                marginBottom: '16px',
-                fontSize: '14px',
-                color: '#065f46'
-              }}>
-                ✓ Using server-side payment processing with BUYER_PRIVATE_KEY from environment variables.
-                No wallet approval needed.
-              </div>
+              {!useBrowserWallet && (
+                <div style={{ 
+                  padding: '12px', 
+                  background: '#d1fae5', 
+                  border: '1px solid #6ee7b7', 
+                  borderRadius: '6px',
+                  marginBottom: '16px',
+                  fontSize: '14px',
+                  color: '#065f46'
+                }}>
+                  ✓ Using server-side payment processing with BUYER_PRIVATE_KEY from environment variables.
+                  No wallet approval needed.
+                </div>
+              )}
+
+              {useBrowserWallet && walletConnected && (
+                <div style={{ 
+                  padding: '12px', 
+                  background: '#dbeafe', 
+                  border: '1px solid #93c5fd', 
+                  borderRadius: '6px',
+                  marginBottom: '16px',
+                  fontSize: '14px',
+                  color: '#1e40af'
+                }}>
+                  ✓ Browser wallet connected. SDK uses dynamic imports (browser-compatible).
+                  You'll approve transactions in your wallet.
+                </div>
+              )}
               
               <div style={{ 
                 padding: '16px', 
@@ -294,12 +378,75 @@ export default function Demo() {
                 }}>
                   <input
                     type="checkbox"
-                    checked={useUniversalSigner}
-                    onChange={(e) => setUseUniversalSigner(e.target.checked)}
+                    checked={useBrowserWallet}
+                    onChange={(e) => {
+                      setUseBrowserWallet(e.target.checked);
+                      if (e.target.checked) {
+                        setUseUniversalSigner(false);
+                      }
+                    }}
+                    disabled={!isMounted || !hasEthereum}
                     style={{ 
                       width: '18px', 
                       height: '18px',
-                      cursor: 'pointer'
+                      cursor: (isMounted && hasEthereum) ? 'pointer' : 'not-allowed',
+                      opacity: (isMounted && hasEthereum) ? 1 : 0.5
+                    }}
+                  />
+                  <div>
+                    <strong>Use Browser Wallet</strong>
+                    <div style={{ fontSize: '12px', marginTop: '4px', opacity: 0.8 }}>
+                      {isMounted && hasEthereum
+                        ? 'Test browser-compatible SDK with MetaMask/wallet extension'
+                        : 'Wallet extension not detected'}
+                    </div>
+                  </div>
+                </label>
+                {useBrowserWallet && isMounted && hasEthereum && (
+                  <div style={{ 
+                    marginTop: '12px', 
+                    padding: '8px', 
+                    background: '#fef9c3', 
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    color: '#78350f'
+                  }}>
+                    🌐 Browser wallet mode. SDK uses dynamic imports for browser compatibility.
+                    Payments will be processed directly from your wallet.
+                  </div>
+                )}
+              </div>
+
+              <div style={{ 
+                padding: '16px', 
+                background: '#fef3c7', 
+                border: '1px solid #fcd34d', 
+                borderRadius: '6px',
+                marginBottom: '16px'
+              }}>
+                <label style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '12px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  color: '#92400e'
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={useUniversalSigner}
+                    onChange={(e) => {
+                      setUseUniversalSigner(e.target.checked);
+                      if (e.target.checked) {
+                        setUseBrowserWallet(false);
+                      }
+                    }}
+                    disabled={useBrowserWallet}
+                    style={{ 
+                      width: '18px', 
+                      height: '18px',
+                      cursor: useBrowserWallet ? 'not-allowed' : 'pointer',
+                      opacity: useBrowserWallet ? 0.5 : 1
                     }}
                   />
                   <div>
@@ -370,16 +517,23 @@ export default function Demo() {
               {paymentState.paymentMethod && (
                 <div style={{ 
                   padding: '12px', 
-                  background: paymentState.paymentMethod === 'universal-signer' ? '#dbeafe' : '#f3f4f6',
-                  border: `1px solid ${paymentState.paymentMethod === 'universal-signer' ? '#93c5fd' : '#d1d5db'}`,
+                  background: paymentState.paymentMethod === 'universal-signer' ? '#dbeafe' : 
+                             paymentState.paymentMethod === 'browser-wallet' ? '#d1fae5' : '#f3f4f6',
+                  border: `1px solid ${paymentState.paymentMethod === 'universal-signer' ? '#93c5fd' : 
+                                  paymentState.paymentMethod === 'browser-wallet' ? '#6ee7b7' : '#d1d5db'}`,
                   borderRadius: '6px',
                   marginBottom: '24px',
                   fontSize: '14px',
-                  color: paymentState.paymentMethod === 'universal-signer' ? '#1e40af' : '#374151'
+                  color: paymentState.paymentMethod === 'universal-signer' ? '#1e40af' : 
+                         paymentState.paymentMethod === 'browser-wallet' ? '#065f46' : '#374151'
                 }}>
                   {paymentState.paymentMethod === 'universal-signer' ? (
                     <>
                       🌐 <strong>Universal Signer</strong> - Multi-chain payment processed using @pushchain/core
+                    </>
+                  ) : paymentState.paymentMethod === 'browser-wallet' ? (
+                    <>
+                      🌐 <strong>Browser Wallet</strong> - Payment processed directly from browser wallet using browser-compatible SDK
                     </>
                   ) : (
                     <>
