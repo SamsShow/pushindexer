@@ -1,13 +1,13 @@
 // Use require for Vercel serverless compatibility - must be at top level
 const ethers = require("ethers");
-import type { VercelRequest, VercelResponse } from "@vercel/node";
+const { VercelRequest, VercelResponse } = require("@vercel/node");
 
 const FACILITATOR_ABI = [
   "function facilitateNativeTransfer(address recipient, uint256 amount) external payable",
   "event FacilitatedTx(address indexed sender, address indexed target, address indexed token, uint256 value, bytes32 txHash, uint256 timestamp, uint8 txType)",
 ];
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+module.exports = async function handler(req: VercelRequest, res: VercelResponse) {
   // Only allow POST requests
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
