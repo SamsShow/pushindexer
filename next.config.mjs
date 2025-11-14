@@ -3,7 +3,7 @@ const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ['@pushchain/x402-sdk'],
   // Fix Vercel serverless function bundling issues
-  serverExternalPackages: ['pg', '@pushchain/core'],
+  serverExternalPackages: ['pg', '@pushchain/core', 'ethers'],
   // Use webpack instead of Turbopack for better compatibility
   webpack: (config, { isServer }) => {
     if (isServer) {

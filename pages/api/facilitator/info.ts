@@ -1,5 +1,5 @@
-// Use require for Vercel serverless compatibility
-const { ethers } = require("ethers");
+// Use require for Vercel serverless compatibility - must be at top level
+const ethers = require("ethers");
 import type { NextApiRequest, NextApiResponse } from "next";
 
 const FACILITATOR_ABI = [
