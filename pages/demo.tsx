@@ -31,6 +31,7 @@ export default function Demo() {
   const [ethersAvailable, setEthersAvailable] = useState<boolean>(false);
   const [isMounted, setIsMounted] = useState<boolean>(false);
   const [hasEthereum, setHasEthereum] = useState<boolean>(false);
+  const [showToast, setShowToast] = useState<boolean>(false);
 
   // Set mounted state after hydration to avoid SSR mismatch
   useEffect(() => {
@@ -205,8 +206,42 @@ export default function Demo() {
     return `https://donut.push.network/tx/${txHash}`;
   };
 
+  const handleComposerClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    setShowToast(true);
+    setTimeout(() => {
+      setShowToast(false);
+    }, 3000);
+  };
+
   return (
     <div className="container">
+      {/* Toast Notification */}
+      {showToast && (
+        <div
+          style={{
+            position: 'fixed',
+            top: '20px',
+            right: '20px',
+            background: '#1a1a1a',
+            color: '#fff',
+            padding: '16px 24px',
+            borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            transition: 'all 0.3s ease-out',
+            transform: 'translateX(0)',
+            opacity: 1,
+          }}
+        >
+          <span style={{ fontSize: '20px' }}>🚀</span>
+          <span style={{ fontSize: '14px', fontWeight: '500' }}>Coming Soon</span>
+        </div>
+      )}
+      
       {/* Header */}
       <div style={{ 
         display: 'flex', 
@@ -229,11 +264,16 @@ export default function Demo() {
           </div>
         </div>
         <nav style={{ display: 'flex', gap: '24px', alignItems: 'center' }}>
-          <a href="#" style={{ color: '#6b7280', textDecoration: 'none' }}>Composer</a>
+          <a 
+            href="#" 
+            onClick={handleComposerClick}
+            style={{ color: '#6b7280', textDecoration: 'none', cursor: 'pointer' }}
+          >
+            Composer
+          </a>
           <a href="/demo" style={{ color: '#ec4899', textDecoration: 'none', fontWeight: '500' }}>Demo</a>
-          <a href="#" style={{ color: '#6b7280', textDecoration: 'none' }}>Docs</a>
           <a href="https://github.com" target="_blank" rel="noopener noreferrer" style={{ color: '#6b7280', textDecoration: 'none' }}>GitHub</a>
-          <a href="https://www.npmjs.com/package/@pushchain/x402-sdk" target="_blank" rel="noopener noreferrer" style={{ color: '#6b7280', textDecoration: 'none' }}>NPM</a>
+          <a href="https://www.npmjs.com/package/push-x402?activeTab=readme" target="_blank" rel="noopener noreferrer" style={{ color: '#6b7280', textDecoration: 'none' }}>NPM</a>
         </nav>
       </div>
 
