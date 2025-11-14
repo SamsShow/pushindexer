@@ -35,7 +35,6 @@ function validatePaymentRequirements(requirements) {
   }
   return requirements;
 }
-var DEFAULT_PAYMENT_ENDPOINT = "https://pushindexer.vercel.app/api/payment/process";
 var DEFAULT_FACILITATOR_ADDRESS = "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7";
 var DEFAULT_CHAIN_ID = 42101;
 var DEFAULT_PUSH_CHAIN_RPC = "https://evm.rpc-testnet-donut-node1.push.org/";
@@ -87,7 +86,8 @@ function detectChainInfo(paymentRequirements, config) {
 }
 function createX402Client(config = {}) {
   const {
-    paymentEndpoint = DEFAULT_PAYMENT_ENDPOINT,
+    paymentEndpoint,
+    // No default - users must provide walletProvider, privateKey, universalSigner, or their own endpoint
     facilitatorAddress = DEFAULT_FACILITATOR_ADDRESS,
     chainId = DEFAULT_CHAIN_ID,
     baseURL,
@@ -305,17 +305,56 @@ function createX402Client(config = {}) {
             };
           }
           if (!paymentResult && privateKey) {
+            if (!ethers) {
+              throw new Error("ethers.js is required when using privateKey. Please install: npm install ethers");
+            }
+            if (onPaymentStatus) {
+              onPaymentStatus("Processing payment with private key...");
+            }
+            const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
+            const facilitatorAbi = [
+              "function facilitateNativeTransfer(address recipient, uint256 amount) external payable"
+            ];
+            const provider = new ethers.JsonRpcProvider(chainInfo.rpcUrl);
+            const wallet = new ethers.Wallet(privateKey, provider);
+            const contract = new ethers.Contract(facilitatorContractAddress, facilitatorAbi, wallet);
+            const amountWei = ethers.parseEther(amount.toString());
+            const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
+              recipient,
+              amountWei,
+              { value: amountWei }
+            );
+            const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
+              value: amountWei,
+              gasLimit: gasEstimate
+            });
+            if (onPaymentStatus) {
+              onPaymentStatus("Transaction sent, waiting for confirmation...");
+            }
+            const receipt = await tx.wait();
+            const network = await provider.getNetwork();
+            paymentResult = {
+              success: true,
+              txHash: tx.hash,
+              recipient,
+              amount: amount.toString(),
+              chainId: network.chainId.toString(),
+              blockNumber: receipt.blockNumber
+            };
+          }
+          if (!paymentResult && paymentEndpoint) {
             const baseUrlClean = baseURL?.endsWith("/") ? baseURL.slice(0, -1) : baseURL;
             const endpointUrl = baseURL ? `${baseUrlClean}/api/payment/process` : paymentEndpoint;
             const paymentPayload = {
               recipient,
               amount,
-              privateKey
+              chainId: chainInfo.chainId,
+              rpcUrl: chainInfo.rpcUrl
             };
-            console.log("[x402-sdk] Making payment request with privateKey:", {
+            console.log("[x402-sdk] Making payment request to custom endpoint:", {
               method: "POST",
               url: endpointUrl,
-              payload: { ...paymentPayload, privateKey: "[REDACTED]" }
+              payload: { ...paymentPayload, rpcUrl: paymentPayload.rpcUrl ? "[REDACTED]" : void 0 }
             });
             const paymentResponse = await axios.post(
               endpointUrl,
@@ -341,45 +380,9 @@ function createX402Client(config = {}) {
             paymentResult = paymentResponse.data;
           }
           if (!paymentResult) {
-            const baseUrlClean = baseURL?.endsWith("/") ? baseURL.slice(0, -1) : baseURL;
-            const endpointUrl = baseURL ? `${baseUrlClean}/api/payment/process` : paymentEndpoint;
-            const paymentPayload = {
-              recipient,
-              amount,
-              chainId: chainInfo.chainId,
-              rpcUrl: chainInfo.rpcUrl
-            };
-            console.log("[x402-sdk] Making payment request:", {
-              method: "POST",
-              url: endpointUrl,
-              payload: { ...paymentPayload, rpcUrl: paymentPayload.rpcUrl ? "[REDACTED]" : void 0 }
-            });
-            const paymentResponse = await axios.post(
-              endpointUrl,
-              paymentPayload,
-              {
-                headers: {
-                  "Content-Type": "application/json"
-                },
-                timeout: 6e4,
-                // Add withCredentials if needed for CORS
-                withCredentials: false
-              }
+            throw new Error(
+              "Payment processing failed: No payment method available. Please provide one of: walletProvider, privateKey, universalSigner, or paymentEndpoint. The SDK calls the facilitator contract directly - no serverless API required!"
             );
-            if (!paymentResponse.data) {
-              throw new Error("Payment processing failed: Empty response from payment endpoint. Make sure you have BUYER_PRIVATE_KEY set up server-side or provide privateKey/walletProvider in SDK config.");
-            }
-            if (!paymentResponse.data.success) {
-              const errorMsg = paymentResponse.data.txHash ? "Payment processing failed: Transaction may have failed" : "Payment processing failed: No transaction hash received";
-              throw new Error(errorMsg);
-            }
-            if (!paymentResponse.data.txHash || typeof paymentResponse.data.txHash !== "string") {
-              throw new Error("Payment processing failed: Invalid transaction hash received");
-            }
-            paymentResult = paymentResponse.data;
-          }
-          if (!paymentResult) {
-            throw new Error("Payment processing failed: No payment method available or all methods failed");
           }
           const paymentProof = {
             scheme: paymentRequirements.scheme || "exact",

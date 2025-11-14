@@ -51,8 +51,17 @@ interface X402ClientConfig {
      */
     onPaymentStatus?: (status: string) => void;
     /**
-     * Optional: Override public facilitator API endpoint
-     * Default: https://pushindexer.vercel.app/api/payment/process
+     * Optional: Custom payment endpoint for server-side processing
+     * If not provided, SDK will use direct facilitator contract calls (walletProvider/privateKey/universalSigner)
+     * Only use this if you have your own payment processing server
+     *
+     * @example
+     * ```typescript
+     * // Use your own server endpoint
+     * const client = createX402Client({
+     *   paymentEndpoint: 'https://your-server.com/api/payment/process'
+     * });
+     * ```
      */
     paymentEndpoint?: string;
     /**
