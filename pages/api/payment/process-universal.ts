@@ -1,5 +1,4 @@
-// Use require for ethers to avoid ESM/CommonJS issues on Vercel
-const ethers = require("ethers");
+import { ethers } from "ethers";
 import type { NextApiRequest, NextApiResponse } from "next";
 
 const FACILITATOR_ABI = [
