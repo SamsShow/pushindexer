@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { createX402Client } from '../packages/x402-sdk/src/index';
+import { createX402Client, X402ClientBuilder, X402Error, X402ErrorCode } from '../packages/x402-sdk/src/index';
 import type { AxiosResponse } from 'axios';
 
 interface PaymentState {
   status: 'idle' | 'loading' | 'success' | 'error';
   response?: AxiosResponse;
   error?: string;
+  errorCode?: X402ErrorCode;
   txHash?: string;
   timing?: {
     total: number;
@@ -16,17 +17,17 @@ interface PaymentState {
   paymentStatus?: string;
   facilitatorInfo?: any;
   paymentMethod?: 'server-side' | 'universal-signer' | 'browser-wallet';
+  configMethod?: 'standard' | 'builder' | 'preset';
 }
-
-// Hardcoded public facilitator address
-const PUBLIC_FACILITATOR_ADDRESS = '0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7';
-const FACILITATOR_CHAIN_ID = '42101';
 
 export default function Demo() {
   const [paymentState, setPaymentState] = useState<PaymentState>({ status: 'idle' });
   const [paymentStatus, setPaymentStatus] = useState<string>('');
   const [useUniversalSigner, setUseUniversalSigner] = useState<boolean>(false);
   const [useBrowserWallet, setUseBrowserWallet] = useState<boolean>(false);
+  const [useBuilderPattern, setUseBuilderPattern] = useState<boolean>(false);
+  const [useNetworkPreset, setUseNetworkPreset] = useState<boolean>(true);
+  const [debugMode, setDebugMode] = useState<boolean>(false);
   const [walletConnected, setWalletConnected] = useState<boolean>(false);
   const [ethersAvailable, setEthersAvailable] = useState<boolean>(false);
   const [isMounted, setIsMounted] = useState<boolean>(false);
@@ -51,27 +52,48 @@ export default function Demo() {
   }, [useBrowserWallet, isMounted]);
 
   useEffect(() => {
-    // Initialize x402 client
-    // Browser-compatible SDK now uses dynamic imports internally
+    // Initialize x402 client with new SDK features
     const initClient = async () => {
       let client;
+      let configMethod: 'standard' | 'builder' | 'preset' = 'standard';
       
       if (useBrowserWallet && isMounted && hasEthereum && ethersAvailable) {
-        // Use browser wallet provider (demonstrates browser compatibility)
+        // Use browser wallet provider
         try {
-          // Dynamic import for ethers (browser-compatible)
           const ethersModule = await import('ethers');
           const ethers = ethersModule.default || ethersModule;
           const provider = new ethers.BrowserProvider((window as any).ethereum);
-          client = createX402Client({
-            baseURL: isMounted ? window.location.origin : '',
-            walletProvider: provider, // SDK will use dynamic imports internally
-            facilitatorAddress: PUBLIC_FACILITATOR_ADDRESS,
-            chainId: 42101,
-            onPaymentStatus: (status: string) => {
-              setPaymentStatus(status);
-            },
-          });
+          
+          if (useBuilderPattern) {
+            // Use builder pattern
+            configMethod = 'builder';
+            client = X402ClientBuilder
+              .forTestnet()
+              .withWallet(provider)
+              .withStatusCallback((status: string) => setPaymentStatus(status))
+              .withDebug(debugMode)
+              .build();
+          } else if (useNetworkPreset) {
+            // Use network preset
+            configMethod = 'preset';
+            client = createX402Client({
+              network: 'push-testnet', // New: Network preset!
+              walletProvider: provider,
+              debug: debugMode,
+              onPaymentStatus: (status: string) => {
+                setPaymentStatus(status);
+              },
+            });
+          } else {
+            // Standard config (still works!)
+            client = createX402Client({
+              walletProvider: provider,
+              debug: debugMode,
+              onPaymentStatus: (status: string) => {
+                setPaymentStatus(status);
+              },
+            });
+          }
           setWalletConnected(true);
         } catch (error) {
           console.error('Failed to connect wallet:', error);
@@ -80,43 +102,82 @@ export default function Demo() {
           const paymentEndpoint = useUniversalSigner 
             ? '/api/payment/process-universal' 
             : '/api/payment/process';
-          client = createX402Client({
-            baseURL: isMounted ? window.location.origin : '',
-            paymentEndpoint,
-            facilitatorAddress: PUBLIC_FACILITATOR_ADDRESS,
-            chainId: 42101,
-            onPaymentStatus: (status: string) => {
-              setPaymentStatus(status);
-            },
-          });
+          
+          if (useBuilderPattern) {
+            configMethod = 'builder';
+            client = X402ClientBuilder
+              .forTestnet()
+              .withPaymentEndpoint(paymentEndpoint)
+              .withStatusCallback((status: string) => setPaymentStatus(status))
+              .withDebug(debugMode)
+              .build();
+          } else if (useNetworkPreset) {
+            configMethod = 'preset';
+            client = createX402Client({
+              network: 'push-testnet',
+              paymentEndpoint,
+              debug: debugMode,
+              onPaymentStatus: (status: string) => {
+                setPaymentStatus(status);
+              },
+            });
+          } else {
+            client = createX402Client({
+              paymentEndpoint,
+              debug: debugMode,
+              onPaymentStatus: (status: string) => {
+                setPaymentStatus(status);
+              },
+            });
+          }
         }
       } else {
         // Use payment endpoint (server-side processing)
         const paymentEndpoint = useUniversalSigner 
           ? '/api/payment/process-universal' 
           : '/api/payment/process';
-        client = createX402Client({
-          baseURL: isMounted ? window.location.origin : '',
-          paymentEndpoint,
-          facilitatorAddress: PUBLIC_FACILITATOR_ADDRESS,
-          chainId: 42101,
-          onPaymentStatus: (status: string) => {
-            setPaymentStatus(status);
-          },
-        });
+        
+        if (useBuilderPattern) {
+          configMethod = 'builder';
+          client = X402ClientBuilder
+            .forTestnet()
+            .withPaymentEndpoint(paymentEndpoint)
+            .withStatusCallback((status: string) => setPaymentStatus(status))
+            .withDebug(debugMode)
+            .build();
+        } else if (useNetworkPreset) {
+          configMethod = 'preset';
+          client = createX402Client({
+            network: 'push-testnet', // New: Network preset!
+            paymentEndpoint,
+            debug: debugMode,
+            onPaymentStatus: (status: string) => {
+              setPaymentStatus(status);
+            },
+          });
+        } else {
+          client = createX402Client({
+            paymentEndpoint,
+            debug: debugMode,
+            onPaymentStatus: (status: string) => {
+              setPaymentStatus(status);
+            },
+          });
+        }
         setWalletConnected(false);
       }
 
-      // Store client for use in button click
+      // Store client and config method for use in button click
       if (isMounted) {
         (window as any).x402Client = client;
+        (window as any).x402ConfigMethod = configMethod;
       }
     };
 
     if (isMounted) {
       initClient();
     }
-  }, [useUniversalSigner, useBrowserWallet, ethersAvailable, isMounted, hasEthereum]);
+  }, [useUniversalSigner, useBrowserWallet, useBuilderPattern, useNetworkPreset, debugMode, ethersAvailable, isMounted, hasEthereum]);
 
   const handleRequest = async () => {
     setPaymentState({ status: 'loading' });
@@ -161,12 +222,14 @@ export default function Demo() {
         }
       }
 
-      // Use hardcoded facilitator info (no API call needed)
+      // Get facilitator info from config (using defaults from SDK)
       const facilitatorInfo = {
-        contractAddress: PUBLIC_FACILITATOR_ADDRESS,
-        chainId: FACILITATOR_CHAIN_ID,
+        contractAddress: '0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7', // Default from SDK
+        chainId: '42101',
         network: 'push',
       };
+
+      const configMethod = (window as any).x402ConfigMethod || 'standard';
 
       setPaymentState({
         status: 'success',
@@ -180,15 +243,30 @@ export default function Demo() {
         txHash,
         facilitatorInfo,
         paymentMethod: useBrowserWallet ? 'browser-wallet' : (useUniversalSigner ? 'universal-signer' : 'server-side'),
+        configMethod,
       });
       setPaymentStatus('Payment successful!');
     } catch (error: any) {
       console.error('Request error:', error);
+      
+      // Enhanced error handling with error codes
+      let errorMessage = error.message || 'Unknown error occurred';
+      let errorCode: X402ErrorCode | undefined;
+      
+      if (error instanceof X402Error) {
+        errorCode = error.code;
+        errorMessage = `${error.code}: ${error.message}`;
+        if (error.details) {
+          console.error('Error details:', error.details);
+        }
+      }
+      
       setPaymentState({
         status: 'error',
-        error: error.message || 'Unknown error occurred',
+        error: errorMessage,
+        errorCode,
       });
-      setPaymentStatus(`Error: ${error.message || 'Unknown error'}`);
+      setPaymentStatus(`Error: ${errorMessage}`);
     }
   };
 
@@ -400,6 +478,87 @@ export default function Demo() {
                   You'll approve transactions in your wallet.
                 </div>
               )}
+
+              {/* New SDK Features */}
+              <div style={{ 
+                padding: '16px', 
+                background: '#e0e7ff', 
+                border: '1px solid #a5b4fc', 
+                borderRadius: '6px',
+                marginBottom: '16px'
+              }}>
+                <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: '#3730a3' }}>
+                  🆕 New SDK Features
+                </h3>
+                
+                <label style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '12px',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  color: '#4c1d95',
+                  marginBottom: '8px'
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={useNetworkPreset}
+                    onChange={(e) => setUseNetworkPreset(e.target.checked)}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                  />
+                  <div>
+                    <strong>Use Network Preset</strong>
+                    <div style={{ fontSize: '11px', marginTop: '2px', opacity: 0.8 }}>
+                      Uses 'push-testnet' preset (simplifies config)
+                    </div>
+                  </div>
+                </label>
+
+                <label style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '12px',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  color: '#4c1d95',
+                  marginBottom: '8px'
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={useBuilderPattern}
+                    onChange={(e) => setUseBuilderPattern(e.target.checked)}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                  />
+                  <div>
+                    <strong>Use Builder Pattern</strong>
+                    <div style={{ fontSize: '11px', marginTop: '2px', opacity: 0.8 }}>
+                      Fluent API: X402ClientBuilder.forTestnet().withWallet().build()
+                    </div>
+                  </div>
+                </label>
+
+                <label style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '12px',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  color: '#4c1d95'
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={debugMode}
+                    onChange={(e) => setDebugMode(e.target.checked)}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                  />
+                  <div>
+                    <strong>Debug Mode</strong>
+                    <div style={{ fontSize: '11px', marginTop: '2px', opacity: 0.8 }}>
+                      Enable detailed logging (check browser console)
+                    </div>
+                  </div>
+                </label>
+              </div>
               
               <div style={{ 
                 padding: '16px', 
@@ -562,7 +721,7 @@ export default function Demo() {
                   border: `1px solid ${paymentState.paymentMethod === 'universal-signer' ? '#93c5fd' : 
                                   paymentState.paymentMethod === 'browser-wallet' ? '#6ee7b7' : '#d1d5db'}`,
                   borderRadius: '6px',
-                  marginBottom: '24px',
+                  marginBottom: '16px',
                   fontSize: '14px',
                   color: paymentState.paymentMethod === 'universal-signer' ? '#1e40af' : 
                          paymentState.paymentMethod === 'browser-wallet' ? '#065f46' : '#374151'
@@ -580,6 +739,24 @@ export default function Demo() {
                       ⚡ <strong>Server-Side</strong> - Payment processed using ethers.js
                     </>
                   )}
+                </div>
+              )}
+
+              {/* Config Method Display */}
+              {paymentState.configMethod && (
+                <div style={{ 
+                  padding: '12px', 
+                  background: '#f0f9ff',
+                  border: '1px solid #bae6fd',
+                  borderRadius: '6px',
+                  marginBottom: '24px',
+                  fontSize: '13px',
+                  color: '#0c4a6e'
+                }}>
+                  <strong>Configuration Method:</strong>{' '}
+                  {paymentState.configMethod === 'builder' && '🛠️ Builder Pattern'}
+                  {paymentState.configMethod === 'preset' && '⚙️ Network Preset'}
+                  {paymentState.configMethod === 'standard' && '📝 Standard Config'}
                 </div>
               )}
 
@@ -667,6 +844,37 @@ export default function Demo() {
                 <span className="status-icon"></span>
                 {paymentState.error}
               </div>
+              
+              {/* Enhanced Error Display */}
+              {paymentState.errorCode && (
+                <div style={{ 
+                  marginTop: '16px',
+                  padding: '12px',
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  borderRadius: '6px',
+                  fontSize: '13px'
+                }}>
+                  <div style={{ fontWeight: '600', color: '#991b1b', marginBottom: '4px' }}>
+                    Error Code: {paymentState.errorCode}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#7f1d1d', marginTop: '8px' }}>
+                    {paymentState.errorCode === X402ErrorCode.INSUFFICIENT_FUNDS && (
+                      <>💡 <strong>Suggestion:</strong> Add funds to your wallet</>
+                    )}
+                    {paymentState.errorCode === X402ErrorCode.NETWORK_ERROR && (
+                      <>💡 <strong>Suggestion:</strong> Check your internet connection</>
+                    )}
+                    {paymentState.errorCode === X402ErrorCode.PAYMENT_METHOD_NOT_AVAILABLE && (
+                      <>💡 <strong>Suggestion:</strong> Enable browser wallet or use server-side processing</>
+                    )}
+                    {paymentState.errorCode === X402ErrorCode.TRANSACTION_FAILED && (
+                      <>💡 <strong>Suggestion:</strong> Check transaction on explorer, verify gas settings</>
+                    )}
+                  </div>
+                </div>
+              )}
+              
               <button 
                 onClick={handleStartOver}
                 className="button-secondary"

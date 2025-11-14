@@ -1,6 +1,27 @@
 import type { AxiosRequestConfig, AxiosResponse } from 'axios';
 
 /**
+ * Wallet provider interface (compatible with ethers.js providers)
+ * This is a minimal interface that works with ethers BrowserProvider, JsonRpcProvider, etc.
+ */
+export interface WalletProvider {
+  getSigner?: () => Promise<any>;
+  getNetwork?: () => Promise<{ chainId: bigint | number | string }>;
+  [key: string]: any;
+}
+
+/**
+ * Universal Signer type from @pushchain/core
+ * This is a placeholder type - actual type would come from @pushchain/core if available
+ */
+export type UniversalSigner = any;
+
+/**
+ * Network preset type
+ */
+export type NetworkPreset = 'push-testnet' | 'push-mainnet';
+
+/**
  * Payment requirements from a 402 response
  */
 export interface PaymentRequirements {
@@ -101,6 +122,13 @@ export interface X402ClientConfig {
   privateKey?: string;
   
   /**
+   * Optional: Network preset ('push-testnet' or 'push-mainnet')
+   * When provided, automatically sets facilitatorAddress, chainId, and pushChainRpcUrl
+   * Can be overridden by explicit config values
+   */
+  network?: NetworkPreset;
+
+  /**
    * Optional: Wallet provider for browser/client-side transactions
    * Accepts ethers.js providers (e.g., window.ethereum from MetaMask)
    * If provided, transactions will prompt user for approval in their wallet.
@@ -113,7 +141,7 @@ export interface X402ClientConfig {
    * const client = createX402Client({ walletProvider: provider });
    * ```
    */
-  walletProvider?: any; // ethers.Provider type
+  walletProvider?: WalletProvider;
   
   /**
    * Optional: Universal Signer from Push Chain SDK
@@ -127,7 +155,13 @@ export interface X402ClientConfig {
    * const client = createX402Client({ universalSigner });
    * ```
    */
-  universalSigner?: any; // UniversalSigner type from @pushchain/core
+  universalSigner?: UniversalSigner;
+
+  /**
+   * Optional: Enable debug mode for detailed logging
+   * When enabled, logs all payment flow steps, timing information, and transaction details
+   */
+  debug?: boolean;
   
   /**
    * Optional: Push Chain RPC URL for Universal Signer chain detection
@@ -163,5 +197,86 @@ export interface PaymentProcessorResponse {
   amount: string;
   chainId: string;
   blockNumber?: number;
+}
+
+/**
+ * Error codes for x402 payment processing
+ */
+export enum X402ErrorCode {
+  PAYMENT_REQUIRED = 'PAYMENT_REQUIRED',
+  INSUFFICIENT_FUNDS = 'INSUFFICIENT_FUNDS',
+  PAYMENT_FAILED = 'PAYMENT_FAILED',
+  INVALID_PAYMENT_REQUIREMENTS = 'INVALID_PAYMENT_REQUIREMENTS',
+  PAYMENT_METHOD_NOT_AVAILABLE = 'PAYMENT_METHOD_NOT_AVAILABLE',
+  TRANSACTION_FAILED = 'TRANSACTION_FAILED',
+  NETWORK_ERROR = 'NETWORK_ERROR',
+  MAX_RETRIES_EXCEEDED = 'MAX_RETRIES_EXCEEDED',
+  UNKNOWN_ERROR = 'UNKNOWN_ERROR',
+}
+
+/**
+ * Enhanced error class for x402 payment processing
+ */
+export class X402Error extends Error {
+  public readonly code: X402ErrorCode;
+  public readonly details?: any;
+  public response?: any;
+  public request?: any;
+
+  constructor(
+    message: string,
+    code: X402ErrorCode = X402ErrorCode.UNKNOWN_ERROR,
+    details?: any
+  ) {
+    super(message);
+    this.name = 'X402Error';
+    this.code = code;
+    this.details = details;
+    
+    // Maintain stack trace
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, X402Error);
+    }
+  }
+
+  /**
+   * Create X402Error from an existing error
+   */
+  static fromError(error: any, code?: X402ErrorCode): X402Error {
+    if (error instanceof X402Error) {
+      return error;
+    }
+
+    const x402Error = new X402Error(
+      error.message || 'Unknown error occurred',
+      code || X402ErrorCode.UNKNOWN_ERROR,
+      error
+    );
+
+    if (error.response) {
+      x402Error.response = error.response;
+    }
+    if (error.request) {
+      x402Error.request = error.request;
+    }
+
+    return x402Error;
+  }
+}
+
+/**
+ * Typed response wrapper for x402 requests
+ * Extends AxiosResponse with payment-specific fields
+ */
+export interface X402Response<T = any> extends AxiosResponse<T> {
+  /**
+   * Payment proof if payment was processed during this request
+   */
+  paymentProof?: PaymentProof;
+  
+  /**
+   * Whether payment was required and processed
+   */
+  paymentProcessed?: boolean;
 }
 

@@ -1,5 +1,8 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
 import type { PaymentRequirements, PaymentProof, PaymentProcessorResponse, X402ClientConfig, ChainInfo } from './types';
+import { X402Error, X402ErrorCode } from './types';
+import { mergeConfig, DEFAULT_FACILITATOR_ADDRESS, DEFAULT_CHAIN_ID, DEFAULT_PUSH_CHAIN_RPC } from './config';
+import { getPresetConfig } from './presets';
 
 // Lazy loading for peer dependencies (browser-compatible)
 // These are loaded on-demand when needed, not at module load time
@@ -96,19 +99,15 @@ function validatePaymentRequirements(requirements: any): PaymentRequirements {
 }
 
 /**
- * Default facilitator contract address
- * Users can override this via config.facilitatorAddress
+ * Debug logging helper
  */
-const DEFAULT_FACILITATOR_ADDRESS = '0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7';
-const DEFAULT_CHAIN_ID = 42101;
-const DEFAULT_PUSH_CHAIN_RPC = 'https://evm.rpc-testnet-donut-node1.push.org/';
-
-/**
- * Optional: Custom payment endpoint for server-side processing
- * Only used if explicitly provided in config.paymentEndpoint
- * If not provided, SDK will use direct facilitator contract calls (walletProvider/privateKey/universalSigner)
- */
-const DEFAULT_PAYMENT_ENDPOINT = undefined; // No default - users must configure their own or use direct contract calls
+function debugLog(config: X402ClientConfig, message: string, data?: any): void {
+  if (config.debug) {
+    const timestamp = new Date().toISOString();
+    const logData = data ? ` ${JSON.stringify(data, null, 2)}` : '';
+    console.log(`[x402-sdk:${timestamp}] ${message}${logData}`);
+  }
+}
 
 /**
  * Detects chain information from payment requirements
@@ -225,6 +224,19 @@ async function createUniversalSignerFromEthers(
  * ```
  */
 export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
+  // Handle network preset if provided
+  let finalConfig = config;
+  if (config.network) {
+    const presetConfig = getPresetConfig(config.network);
+    finalConfig = {
+      ...presetConfig,
+      ...config, // User config overrides preset
+    };
+  }
+
+  // Merge with defaults and environment variables
+  finalConfig = mergeConfig(finalConfig);
+
   const {
     paymentEndpoint, // No default - users must provide walletProvider, privateKey, universalSigner, or their own endpoint
     facilitatorAddress = DEFAULT_FACILITATOR_ADDRESS,
@@ -237,7 +249,18 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
     universalSigner: providedUniversalSigner,
     pushChainRpcUrl,
     chainRpcMap,
-  } = config;
+    debug = false,
+  } = finalConfig;
+
+  debugLog(finalConfig, 'Creating x402 client', {
+    hasWalletProvider: !!walletProvider,
+    hasPrivateKey: !!privateKey,
+    hasUniversalSigner: !!providedUniversalSigner,
+    hasPaymentEndpoint: !!paymentEndpoint,
+    facilitatorAddress,
+    chainId,
+    baseURL,
+  });
 
   // Create axios instance
   const axiosInstance = axios.create({
@@ -262,23 +285,41 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
           const attempts = retryAttempts.get(originalConfig) || 0;
           if (attempts >= MAX_RETRIES) {
             const errorMessage = 'Maximum retry attempts reached for payment processing';
+            debugLog(finalConfig, 'Max retries exceeded', { attempts, maxRetries: MAX_RETRIES });
             if (onPaymentStatus) {
               onPaymentStatus(`Error: ${errorMessage}`);
             }
-            return Promise.reject(new Error(errorMessage));
+            return Promise.reject(
+              new X402Error(errorMessage, X402ErrorCode.MAX_RETRIES_EXCEEDED, { attempts, maxRetries: MAX_RETRIES })
+            );
           }
           retryAttempts.set(originalConfig, attempts + 1);
         }
 
+        debugLog(finalConfig, '402 Payment Required detected', {
+          url: originalConfig?.url,
+          method: originalConfig?.method,
+          responseData: error.response?.data,
+        });
+
         let paymentRequirements: PaymentRequirements;
         try {
           paymentRequirements = validatePaymentRequirements(error.response.data);
+          debugLog(finalConfig, 'Payment requirements validated', {
+            recipient: paymentRequirements.payTo || paymentRequirements.recipient,
+            amount: paymentRequirements.maxAmountRequired || paymentRequirements.amount,
+            currency: paymentRequirements.asset || paymentRequirements.currency,
+            chainId: paymentRequirements.chainId,
+          });
         } catch (validationError: any) {
           const errorMessage = `Invalid 402 response: ${validationError.message}`;
+          debugLog(finalConfig, 'Payment requirements validation failed', { error: validationError.message });
           if (onPaymentStatus) {
             onPaymentStatus(`Error: ${errorMessage}`);
           }
-          return Promise.reject(new Error(errorMessage));
+          return Promise.reject(
+            new X402Error(errorMessage, X402ErrorCode.INVALID_PAYMENT_REQUIREMENTS, validationError)
+          );
         }
 
         // Notify status callback if provided
@@ -328,6 +369,9 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
                 // Get signer from wallet provider
                 // Note: Universal Signer will use the provider's RPC, so we need to ensure
                 // the wallet provider is connected to the correct chain
+                if (!walletProvider.getSigner) {
+                  throw new Error('Wallet provider does not support getSigner()');
+                }
                 const chainSigner = await walletProvider.getSigner();
                 universalSigner = await PushChainModule.utils.signer.toUniversal(chainSigner);
               }
@@ -382,6 +426,9 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
                 if (onPaymentStatus) {
                   onPaymentStatus('Universal Signer: Using underlying wallet provider for transaction...');
                 }
+                if (!walletProvider.getSigner) {
+                  throw new Error('Wallet provider does not support getSigner()');
+                }
                 const signer = await walletProvider.getSigner();
                 const contract = new ethersModule.Contract(facilitatorContractAddress, facilitatorAbi, signer);
                 
@@ -400,11 +447,15 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
 
                 // Wait for transaction
                 const receipt = await tx.wait();
-                const network = await walletProvider.getNetwork();
+                let chainId: string | number = chainInfo.chainId;
+                if (walletProvider.getNetwork) {
+                  const network = await walletProvider.getNetwork();
+                  chainId = typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString();
+                }
 
                 txResult = {
                   hash: tx.hash,
-                  chainId: typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString(),
+                  chainId: chainId.toString(),
                   blockNumber: receipt.blockNumber,
                 };
               } else if (privateKey && ethersModule) {
@@ -500,6 +551,12 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
             ];
 
             // Get signer from wallet provider
+            if (!walletProvider.getSigner) {
+              throw new X402Error(
+                'Wallet provider does not support getSigner()',
+                X402ErrorCode.PAYMENT_METHOD_NOT_AVAILABLE
+              );
+            }
             const signer = await walletProvider.getSigner();
             const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, signer);
             const amountWei = ethersForWallet.parseEther(amount.toString());
@@ -523,14 +580,18 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
 
             // Wait for transaction
             const receipt = await tx.wait();
-            const network = await walletProvider.getNetwork();
+            let chainId: string | number = chainInfo.chainId;
+            if (walletProvider.getNetwork) {
+              const network = await walletProvider.getNetwork();
+              chainId = typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString();
+            }
 
             paymentResult = {
               success: true,
               txHash: tx.hash,
               recipient,
               amount: amount.toString(),
-              chainId: typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString(),
+              chainId: chainId.toString(),
               blockNumber: receipt.blockNumber,
             };
           }
@@ -637,12 +698,30 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
 
           // Ensure paymentResult is assigned
           if (!paymentResult) {
-            throw new Error(
+            const errorMessage =
               'Payment processing failed: No payment method available. ' +
               'Please provide one of: walletProvider, privateKey, universalSigner, or paymentEndpoint. ' +
-              'The SDK calls the facilitator contract directly - no serverless API required!'
-            );
+              'The SDK calls the facilitator contract directly - no serverless API required!';
+            debugLog(finalConfig, 'No payment method available', {
+              hasWalletProvider: !!walletProvider,
+              hasPrivateKey: !!privateKey,
+              hasUniversalSigner: !!providedUniversalSigner,
+              hasPaymentEndpoint: !!paymentEndpoint,
+            });
+            throw new X402Error(errorMessage, X402ErrorCode.PAYMENT_METHOD_NOT_AVAILABLE, {
+              hasWalletProvider: !!walletProvider,
+              hasPrivateKey: !!privateKey,
+              hasUniversalSigner: !!providedUniversalSigner,
+              hasPaymentEndpoint: !!paymentEndpoint,
+            });
           }
+
+          debugLog(finalConfig, 'Payment processed successfully', {
+            txHash: paymentResult.txHash,
+            chainId: paymentResult.chainId,
+            recipient: paymentResult.recipient,
+            amount: paymentResult.amount,
+          });
 
           // Create payment proof in x402 format
           const paymentProof: PaymentProof = {
@@ -670,15 +749,35 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
           }
 
           // Retry the request with payment header
+          debugLog(finalConfig, 'Retrying original request with payment proof', {
+            url: originalConfig.url,
+            method: originalConfig.method,
+            paymentProof: {
+              txHash: paymentProof.txHash,
+              amount: paymentProof.amount,
+              currency: paymentProof.currency,
+            },
+          });
           return axiosInstance.request(originalConfig);
         } catch (paymentError: any) {
           const errorMessage = paymentError.response?.data?.message 
             || paymentError.message 
             || 'Unknown payment processing error';
           
+          // Determine error code based on error type
+          let errorCode = X402ErrorCode.PAYMENT_FAILED;
+          if (paymentError.message?.includes('insufficient funds') || paymentError.message?.includes('balance')) {
+            errorCode = X402ErrorCode.INSUFFICIENT_FUNDS;
+          } else if (paymentError.message?.includes('transaction') || paymentError.message?.includes('revert')) {
+            errorCode = X402ErrorCode.TRANSACTION_FAILED;
+          } else if (paymentError.code === 'ECONNREFUSED' || paymentError.code === 'ETIMEDOUT') {
+            errorCode = X402ErrorCode.NETWORK_ERROR;
+          }
+          
           // Enhanced error logging
-          console.error('[x402-sdk] Payment processing error:', {
+          debugLog(finalConfig, 'Payment processing error', {
             message: errorMessage,
+            code: errorCode,
             status: paymentError.response?.status,
             statusText: paymentError.response?.statusText,
             method: paymentError.config?.method,
@@ -690,20 +789,9 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
             onPaymentStatus(`Payment failed: ${errorMessage}`);
           }
           
-          // Create a more informative error
-          const enhancedError = new Error(`x402 Payment Processing Failed: ${errorMessage}`);
-          if (paymentError.response) {
-            (enhancedError as any).response = paymentError.response;
-          }
-          if (paymentError.request) {
-            (enhancedError as any).request = paymentError.request;
-          }
-          if (paymentError.config) {
-            (enhancedError as any).config = {
-              method: paymentError.config.method,
-              url: paymentError.config.url,
-            };
-          }
+          // Create a more informative error with proper error code
+          const enhancedError = X402Error.fromError(paymentError, errorCode);
+          enhancedError.message = `x402 Payment Processing Failed: ${errorMessage}`;
           
           return Promise.reject(enhancedError);
         }

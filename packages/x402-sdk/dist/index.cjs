@@ -30,12 +30,159 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/index.ts
 var index_exports = {};
 __export(index_exports, {
-  createX402Client: () => createX402Client
+  X402ClientBuilder: () => X402ClientBuilder,
+  X402Error: () => X402Error,
+  X402ErrorCode: () => X402ErrorCode,
+  createConfig: () => createConfig,
+  createX402Client: () => createX402Client,
+  getDefaultConfig: () => getDefaultConfig,
+  getPresetConfig: () => getPresetConfig,
+  loadConfigFromEnv: () => loadConfigFromEnv,
+  mergeConfig: () => mergeConfig
 });
 module.exports = __toCommonJS(index_exports);
 
 // src/client.ts
 var import_axios = __toESM(require("axios"), 1);
+
+// src/types.ts
+var X402ErrorCode = /* @__PURE__ */ ((X402ErrorCode2) => {
+  X402ErrorCode2["PAYMENT_REQUIRED"] = "PAYMENT_REQUIRED";
+  X402ErrorCode2["INSUFFICIENT_FUNDS"] = "INSUFFICIENT_FUNDS";
+  X402ErrorCode2["PAYMENT_FAILED"] = "PAYMENT_FAILED";
+  X402ErrorCode2["INVALID_PAYMENT_REQUIREMENTS"] = "INVALID_PAYMENT_REQUIREMENTS";
+  X402ErrorCode2["PAYMENT_METHOD_NOT_AVAILABLE"] = "PAYMENT_METHOD_NOT_AVAILABLE";
+  X402ErrorCode2["TRANSACTION_FAILED"] = "TRANSACTION_FAILED";
+  X402ErrorCode2["NETWORK_ERROR"] = "NETWORK_ERROR";
+  X402ErrorCode2["MAX_RETRIES_EXCEEDED"] = "MAX_RETRIES_EXCEEDED";
+  X402ErrorCode2["UNKNOWN_ERROR"] = "UNKNOWN_ERROR";
+  return X402ErrorCode2;
+})(X402ErrorCode || {});
+var X402Error = class _X402Error extends Error {
+  code;
+  details;
+  response;
+  request;
+  constructor(message, code = "UNKNOWN_ERROR" /* UNKNOWN_ERROR */, details) {
+    super(message);
+    this.name = "X402Error";
+    this.code = code;
+    this.details = details;
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, _X402Error);
+    }
+  }
+  /**
+   * Create X402Error from an existing error
+   */
+  static fromError(error, code) {
+    if (error instanceof _X402Error) {
+      return error;
+    }
+    const x402Error = new _X402Error(
+      error.message || "Unknown error occurred",
+      code || "UNKNOWN_ERROR" /* UNKNOWN_ERROR */,
+      error
+    );
+    if (error.response) {
+      x402Error.response = error.response;
+    }
+    if (error.request) {
+      x402Error.request = error.request;
+    }
+    return x402Error;
+  }
+};
+
+// src/config.ts
+var DEFAULT_FACILITATOR_ADDRESS = "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7";
+var DEFAULT_CHAIN_ID = 42101;
+var DEFAULT_PUSH_CHAIN_RPC = "https://evm.rpc-testnet-donut-node1.push.org/";
+function getEnvVar(key) {
+  if (typeof process !== "undefined" && process.env) {
+    return process.env[key];
+  }
+  return void 0;
+}
+function loadConfigFromEnv() {
+  const config = {};
+  const facilitatorAddress = getEnvVar("PUSH_X402_FACILITATOR_ADDRESS");
+  if (facilitatorAddress) {
+    config.facilitatorAddress = facilitatorAddress;
+  }
+  const chainId = getEnvVar("PUSH_X402_CHAIN_ID");
+  if (chainId) {
+    const parsed = parseInt(chainId, 10);
+    if (!isNaN(parsed)) {
+      config.chainId = parsed;
+    }
+  }
+  const rpcUrl = getEnvVar("PUSH_X402_RPC_URL");
+  if (rpcUrl) {
+    config.pushChainRpcUrl = rpcUrl;
+  }
+  const privateKey = getEnvVar("PUSH_X402_PRIVATE_KEY");
+  if (privateKey) {
+    config.privateKey = privateKey;
+  }
+  return config;
+}
+function getDefaultConfig() {
+  return {
+    facilitatorAddress: DEFAULT_FACILITATOR_ADDRESS,
+    chainId: DEFAULT_CHAIN_ID,
+    pushChainRpcUrl: DEFAULT_PUSH_CHAIN_RPC
+  };
+}
+function mergeConfig(userConfig = {}) {
+  const defaults = getDefaultConfig();
+  const envConfig = loadConfigFromEnv();
+  const merged = {
+    ...defaults,
+    ...envConfig,
+    ...userConfig
+  };
+  if (!merged.baseURL) {
+    try {
+      const globalWindow = typeof globalThis !== "undefined" ? globalThis.window : void 0;
+      if (globalWindow && globalWindow.location && globalWindow.location.origin) {
+        merged.baseURL = globalWindow.location.origin;
+      }
+    } catch {
+    }
+  }
+  return merged;
+}
+function createConfig(userConfig = {}) {
+  return mergeConfig(userConfig);
+}
+
+// src/presets.ts
+var PUSH_TESTNET_CONFIG = {
+  facilitatorAddress: "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7",
+  chainId: 42101,
+  pushChainRpcUrl: "https://evm.rpc-testnet-donut-node1.push.org/"
+};
+var PUSH_MAINNET_CONFIG = {
+  facilitatorAddress: "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7",
+  // TODO: Update when mainnet is available
+  chainId: 42101,
+  // TODO: Update when mainnet is available
+  pushChainRpcUrl: "https://evm.rpc-testnet-donut-node1.push.org/"
+  // TODO: Update when mainnet is available
+};
+function getPresetConfig(network) {
+  switch (network) {
+    case "push-testnet":
+      return { ...PUSH_TESTNET_CONFIG };
+    case "push-mainnet":
+      return { ...PUSH_MAINNET_CONFIG };
+    default:
+      throw new Error(`Unknown network preset: ${network}. Supported presets: 'push-testnet', 'push-mainnet'`);
+  }
+}
+
+// src/client.ts
 var ethers;
 var ethersPromise = null;
 async function loadEthers() {
@@ -104,9 +251,13 @@ function validatePaymentRequirements(requirements) {
   }
   return requirements;
 }
-var DEFAULT_FACILITATOR_ADDRESS = "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7";
-var DEFAULT_CHAIN_ID = 42101;
-var DEFAULT_PUSH_CHAIN_RPC = "https://evm.rpc-testnet-donut-node1.push.org/";
+function debugLog(config, message, data) {
+  if (config.debug) {
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    const logData = data ? ` ${JSON.stringify(data, null, 2)}` : "";
+    console.log(`[x402-sdk:${timestamp}] ${message}${logData}`);
+  }
+}
 function detectChainInfo(paymentRequirements, config) {
   if (paymentRequirements.rpcUrl) {
     return {
@@ -154,6 +305,16 @@ function detectChainInfo(paymentRequirements, config) {
   };
 }
 function createX402Client(config = {}) {
+  let finalConfig = config;
+  if (config.network) {
+    const presetConfig = getPresetConfig(config.network);
+    finalConfig = {
+      ...presetConfig,
+      ...config
+      // User config overrides preset
+    };
+  }
+  finalConfig = mergeConfig(finalConfig);
   const {
     paymentEndpoint,
     // No default - users must provide walletProvider, privateKey, universalSigner, or their own endpoint
@@ -166,8 +327,18 @@ function createX402Client(config = {}) {
     walletProvider,
     universalSigner: providedUniversalSigner,
     pushChainRpcUrl,
-    chainRpcMap
-  } = config;
+    chainRpcMap,
+    debug = false
+  } = finalConfig;
+  debugLog(finalConfig, "Creating x402 client", {
+    hasWalletProvider: !!walletProvider,
+    hasPrivateKey: !!privateKey,
+    hasUniversalSigner: !!providedUniversalSigner,
+    hasPaymentEndpoint: !!paymentEndpoint,
+    facilitatorAddress,
+    chainId,
+    baseURL
+  });
   const axiosInstance = import_axios.default.create({
     baseURL,
     ...axiosConfig
@@ -184,22 +355,39 @@ function createX402Client(config = {}) {
           const attempts = retryAttempts.get(originalConfig) || 0;
           if (attempts >= MAX_RETRIES) {
             const errorMessage = "Maximum retry attempts reached for payment processing";
+            debugLog(finalConfig, "Max retries exceeded", { attempts, maxRetries: MAX_RETRIES });
             if (onPaymentStatus) {
               onPaymentStatus(`Error: ${errorMessage}`);
             }
-            return Promise.reject(new Error(errorMessage));
+            return Promise.reject(
+              new X402Error(errorMessage, "MAX_RETRIES_EXCEEDED" /* MAX_RETRIES_EXCEEDED */, { attempts, maxRetries: MAX_RETRIES })
+            );
           }
           retryAttempts.set(originalConfig, attempts + 1);
         }
+        debugLog(finalConfig, "402 Payment Required detected", {
+          url: originalConfig?.url,
+          method: originalConfig?.method,
+          responseData: error.response?.data
+        });
         let paymentRequirements;
         try {
           paymentRequirements = validatePaymentRequirements(error.response.data);
+          debugLog(finalConfig, "Payment requirements validated", {
+            recipient: paymentRequirements.payTo || paymentRequirements.recipient,
+            amount: paymentRequirements.maxAmountRequired || paymentRequirements.amount,
+            currency: paymentRequirements.asset || paymentRequirements.currency,
+            chainId: paymentRequirements.chainId
+          });
         } catch (validationError) {
           const errorMessage = `Invalid 402 response: ${validationError.message}`;
+          debugLog(finalConfig, "Payment requirements validation failed", { error: validationError.message });
           if (onPaymentStatus) {
             onPaymentStatus(`Error: ${errorMessage}`);
           }
-          return Promise.reject(new Error(errorMessage));
+          return Promise.reject(
+            new X402Error(errorMessage, "INVALID_PAYMENT_REQUIREMENTS" /* INVALID_PAYMENT_REQUIREMENTS */, validationError)
+          );
         }
         if (onPaymentStatus) {
           const amount = paymentRequirements.maxAmountRequired || paymentRequirements.amount || "unknown";
@@ -228,6 +416,9 @@ function createX402Client(config = {}) {
               if (!universalSigner && walletProvider && ethersModule && PushChainModule && PushChainModule.utils && PushChainModule.utils.signer) {
                 if (onPaymentStatus) {
                   onPaymentStatus("Creating Universal Signer from wallet provider...");
+                }
+                if (!walletProvider.getSigner) {
+                  throw new Error("Wallet provider does not support getSigner()");
                 }
                 const chainSigner = await walletProvider.getSigner();
                 universalSigner = await PushChainModule.utils.signer.toUniversal(chainSigner);
@@ -262,6 +453,9 @@ function createX402Client(config = {}) {
                 if (onPaymentStatus) {
                   onPaymentStatus("Universal Signer: Using underlying wallet provider for transaction...");
                 }
+                if (!walletProvider.getSigner) {
+                  throw new Error("Wallet provider does not support getSigner()");
+                }
                 const signer = await walletProvider.getSigner();
                 const contract = new ethersModule.Contract(facilitatorContractAddress, facilitatorAbi, signer);
                 const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
@@ -274,10 +468,14 @@ function createX402Client(config = {}) {
                   gasLimit: gasEstimate
                 });
                 const receipt = await tx.wait();
-                const network = await walletProvider.getNetwork();
+                let chainId2 = chainInfo.chainId;
+                if (walletProvider.getNetwork) {
+                  const network = await walletProvider.getNetwork();
+                  chainId2 = typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString();
+                }
                 txResult = {
                   hash: tx.hash,
-                  chainId: typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString(),
+                  chainId: chainId2.toString(),
                   blockNumber: receipt.blockNumber
                 };
               } else if (privateKey && ethersModule) {
@@ -347,6 +545,12 @@ function createX402Client(config = {}) {
             const facilitatorAbi = [
               "function facilitateNativeTransfer(address recipient, uint256 amount) external payable"
             ];
+            if (!walletProvider.getSigner) {
+              throw new X402Error(
+                "Wallet provider does not support getSigner()",
+                "PAYMENT_METHOD_NOT_AVAILABLE" /* PAYMENT_METHOD_NOT_AVAILABLE */
+              );
+            }
             const signer = await walletProvider.getSigner();
             const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, signer);
             const amountWei = ethersForWallet.parseEther(amount.toString());
@@ -363,13 +567,17 @@ function createX402Client(config = {}) {
               onPaymentStatus("Transaction sent, waiting for confirmation...");
             }
             const receipt = await tx.wait();
-            const network = await walletProvider.getNetwork();
+            let chainId2 = chainInfo.chainId;
+            if (walletProvider.getNetwork) {
+              const network = await walletProvider.getNetwork();
+              chainId2 = typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString();
+            }
             paymentResult = {
               success: true,
               txHash: tx.hash,
               recipient,
               amount: amount.toString(),
-              chainId: typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString(),
+              chainId: chainId2.toString(),
               blockNumber: receipt.blockNumber
             };
           }
@@ -447,10 +655,26 @@ function createX402Client(config = {}) {
             paymentResult = paymentResponse.data;
           }
           if (!paymentResult) {
-            throw new Error(
-              "Payment processing failed: No payment method available. Please provide one of: walletProvider, privateKey, universalSigner, or paymentEndpoint. The SDK calls the facilitator contract directly - no serverless API required!"
-            );
+            const errorMessage = "Payment processing failed: No payment method available. Please provide one of: walletProvider, privateKey, universalSigner, or paymentEndpoint. The SDK calls the facilitator contract directly - no serverless API required!";
+            debugLog(finalConfig, "No payment method available", {
+              hasWalletProvider: !!walletProvider,
+              hasPrivateKey: !!privateKey,
+              hasUniversalSigner: !!providedUniversalSigner,
+              hasPaymentEndpoint: !!paymentEndpoint
+            });
+            throw new X402Error(errorMessage, "PAYMENT_METHOD_NOT_AVAILABLE" /* PAYMENT_METHOD_NOT_AVAILABLE */, {
+              hasWalletProvider: !!walletProvider,
+              hasPrivateKey: !!privateKey,
+              hasUniversalSigner: !!providedUniversalSigner,
+              hasPaymentEndpoint: !!paymentEndpoint
+            });
           }
+          debugLog(finalConfig, "Payment processed successfully", {
+            txHash: paymentResult.txHash,
+            chainId: paymentResult.chainId,
+            recipient: paymentResult.recipient,
+            amount: paymentResult.amount
+          });
           const paymentProof = {
             scheme: paymentRequirements.scheme || "exact",
             amount: String(paymentRequirements.maxAmountRequired || paymentRequirements.amount || "0"),
@@ -470,11 +694,29 @@ function createX402Client(config = {}) {
           if (onPaymentStatus) {
             onPaymentStatus("Retrying request with payment proof...");
           }
+          debugLog(finalConfig, "Retrying original request with payment proof", {
+            url: originalConfig.url,
+            method: originalConfig.method,
+            paymentProof: {
+              txHash: paymentProof.txHash,
+              amount: paymentProof.amount,
+              currency: paymentProof.currency
+            }
+          });
           return axiosInstance.request(originalConfig);
         } catch (paymentError) {
           const errorMessage = paymentError.response?.data?.message || paymentError.message || "Unknown payment processing error";
-          console.error("[x402-sdk] Payment processing error:", {
+          let errorCode = "PAYMENT_FAILED" /* PAYMENT_FAILED */;
+          if (paymentError.message?.includes("insufficient funds") || paymentError.message?.includes("balance")) {
+            errorCode = "INSUFFICIENT_FUNDS" /* INSUFFICIENT_FUNDS */;
+          } else if (paymentError.message?.includes("transaction") || paymentError.message?.includes("revert")) {
+            errorCode = "TRANSACTION_FAILED" /* TRANSACTION_FAILED */;
+          } else if (paymentError.code === "ECONNREFUSED" || paymentError.code === "ETIMEDOUT") {
+            errorCode = "NETWORK_ERROR" /* NETWORK_ERROR */;
+          }
+          debugLog(finalConfig, "Payment processing error", {
             message: errorMessage,
+            code: errorCode,
             status: paymentError.response?.status,
             statusText: paymentError.response?.statusText,
             method: paymentError.config?.method,
@@ -484,19 +726,8 @@ function createX402Client(config = {}) {
           if (onPaymentStatus) {
             onPaymentStatus(`Payment failed: ${errorMessage}`);
           }
-          const enhancedError = new Error(`x402 Payment Processing Failed: ${errorMessage}`);
-          if (paymentError.response) {
-            enhancedError.response = paymentError.response;
-          }
-          if (paymentError.request) {
-            enhancedError.request = paymentError.request;
-          }
-          if (paymentError.config) {
-            enhancedError.config = {
-              method: paymentError.config.method,
-              url: paymentError.config.url
-            };
-          }
+          const enhancedError = X402Error.fromError(paymentError, errorCode);
+          enhancedError.message = `x402 Payment Processing Failed: ${errorMessage}`;
           return Promise.reject(enhancedError);
         }
       }
@@ -505,7 +736,144 @@ function createX402Client(config = {}) {
   );
   return axiosInstance;
 }
+
+// src/builder.ts
+var X402ClientBuilder = class _X402ClientBuilder {
+  config = {};
+  /**
+   * Create a builder instance for Push Chain testnet
+   */
+  static forTestnet() {
+    const builder = new _X402ClientBuilder();
+    builder.config = { ...getPresetConfig("push-testnet") };
+    return builder;
+  }
+  /**
+   * Create a builder instance for Push Chain mainnet
+   */
+  static forMainnet() {
+    const builder = new _X402ClientBuilder();
+    builder.config = { ...getPresetConfig("push-mainnet") };
+    return builder;
+  }
+  /**
+   * Create a builder instance with custom network preset
+   */
+  static forNetwork(network) {
+    const builder = new _X402ClientBuilder();
+    builder.config = { ...getPresetConfig(network) };
+    return builder;
+  }
+  /**
+   * Create a builder instance with custom configuration
+   */
+  static withConfig(config) {
+    const builder = new _X402ClientBuilder();
+    builder.config = { ...config };
+    return builder;
+  }
+  /**
+   * Set wallet provider for browser/client-side transactions
+   */
+  withWallet(walletProvider) {
+    this.config.walletProvider = walletProvider;
+    return this;
+  }
+  /**
+   * Set private key for server-side/agent transactions
+   * ⚠️ WARNING: Only use in secure server-side environments!
+   */
+  withPrivateKey(privateKey) {
+    this.config.privateKey = privateKey;
+    return this;
+  }
+  /**
+   * Set Universal Signer for multi-chain support
+   */
+  withUniversalSigner(universalSigner) {
+    this.config.universalSigner = universalSigner;
+    return this;
+  }
+  /**
+   * Set payment status callback
+   */
+  withStatusCallback(callback) {
+    this.config.onPaymentStatus = callback;
+    return this;
+  }
+  /**
+   * Set base URL for API calls
+   */
+  withBaseURL(baseURL) {
+    this.config.baseURL = baseURL;
+    return this;
+  }
+  /**
+   * Set facilitator contract address
+   */
+  withFacilitatorAddress(address) {
+    this.config.facilitatorAddress = address;
+    return this;
+  }
+  /**
+   * Set chain ID
+   */
+  withChainId(chainId) {
+    this.config.chainId = chainId;
+    return this;
+  }
+  /**
+   * Set Push Chain RPC URL
+   */
+  withRpcUrl(rpcUrl) {
+    this.config.pushChainRpcUrl = rpcUrl;
+    return this;
+  }
+  /**
+   * Set chain RPC mapping for multi-chain support
+   */
+  withChainRpcMap(chainRpcMap) {
+    this.config.chainRpcMap = chainRpcMap;
+    return this;
+  }
+  /**
+   * Set custom payment endpoint
+   */
+  withPaymentEndpoint(endpoint) {
+    this.config.paymentEndpoint = endpoint;
+    return this;
+  }
+  /**
+   * Enable debug mode for detailed logging
+   */
+  withDebug(enabled = true) {
+    this.config.debug = enabled;
+    return this;
+  }
+  /**
+   * Set custom axios configuration
+   */
+  withAxiosConfig(axiosConfig) {
+    this.config.axiosConfig = axiosConfig;
+    return this;
+  }
+  /**
+   * Build and return the configured x402 client
+   * The createX402Client function will handle merging with defaults and env vars
+   */
+  build() {
+    return createX402Client(this.config);
+  }
+};
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
-  createX402Client
+  X402ClientBuilder,
+  X402Error,
+  X402ErrorCode,
+  createConfig,
+  createX402Client,
+  getDefaultConfig,
+  getPresetConfig,
+  loadConfigFromEnv,
+  mergeConfig
 });

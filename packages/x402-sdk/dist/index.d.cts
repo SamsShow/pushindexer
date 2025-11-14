@@ -1,5 +1,25 @@
-import { AxiosRequestConfig, AxiosInstance } from 'axios';
+import { AxiosRequestConfig, AxiosResponse, AxiosInstance } from 'axios';
 
+/**
+ * Wallet provider interface (compatible with ethers.js providers)
+ * This is a minimal interface that works with ethers BrowserProvider, JsonRpcProvider, etc.
+ */
+interface WalletProvider {
+    getSigner?: () => Promise<any>;
+    getNetwork?: () => Promise<{
+        chainId: bigint | number | string;
+    }>;
+    [key: string]: any;
+}
+/**
+ * Universal Signer type from @pushchain/core
+ * This is a placeholder type - actual type would come from @pushchain/core if available
+ */
+type UniversalSigner = any;
+/**
+ * Network preset type
+ */
+type NetworkPreset$1 = 'push-testnet' | 'push-mainnet';
 /**
  * Payment requirements from a 402 response
  */
@@ -16,6 +36,14 @@ interface PaymentRequirements {
     chainId?: string | number;
     rpcUrl?: string;
     [key: string]: any;
+}
+/**
+ * Chain detection result from payment requirements
+ */
+interface ChainInfo {
+    chainId: string | number;
+    rpcUrl: string;
+    network?: string;
 }
 /**
  * Payment proof created after processing payment
@@ -83,6 +111,12 @@ interface X402ClientConfig {
      */
     privateKey?: string;
     /**
+     * Optional: Network preset ('push-testnet' or 'push-mainnet')
+     * When provided, automatically sets facilitatorAddress, chainId, and pushChainRpcUrl
+     * Can be overridden by explicit config values
+     */
+    network?: NetworkPreset$1;
+    /**
      * Optional: Wallet provider for browser/client-side transactions
      * Accepts ethers.js providers (e.g., window.ethereum from MetaMask)
      * If provided, transactions will prompt user for approval in their wallet.
@@ -95,7 +129,7 @@ interface X402ClientConfig {
      * const client = createX402Client({ walletProvider: provider });
      * ```
      */
-    walletProvider?: any;
+    walletProvider?: WalletProvider;
     /**
      * Optional: Universal Signer from Push Chain SDK
      * If provided, enables multi-chain transactions across all Push Chain supported networks.
@@ -108,7 +142,12 @@ interface X402ClientConfig {
      * const client = createX402Client({ universalSigner });
      * ```
      */
-    universalSigner?: any;
+    universalSigner?: UniversalSigner;
+    /**
+     * Optional: Enable debug mode for detailed logging
+     * When enabled, logs all payment flow steps, timing information, and transaction details
+     */
+    debug?: boolean;
     /**
      * Optional: Push Chain RPC URL for Universal Signer chain detection
      * If not provided, will auto-detect from payment requirements or use default Push Chain testnet RPC
@@ -142,6 +181,48 @@ interface PaymentProcessorResponse {
     chainId: string;
     blockNumber?: number;
 }
+/**
+ * Error codes for x402 payment processing
+ */
+declare enum X402ErrorCode {
+    PAYMENT_REQUIRED = "PAYMENT_REQUIRED",
+    INSUFFICIENT_FUNDS = "INSUFFICIENT_FUNDS",
+    PAYMENT_FAILED = "PAYMENT_FAILED",
+    INVALID_PAYMENT_REQUIREMENTS = "INVALID_PAYMENT_REQUIREMENTS",
+    PAYMENT_METHOD_NOT_AVAILABLE = "PAYMENT_METHOD_NOT_AVAILABLE",
+    TRANSACTION_FAILED = "TRANSACTION_FAILED",
+    NETWORK_ERROR = "NETWORK_ERROR",
+    MAX_RETRIES_EXCEEDED = "MAX_RETRIES_EXCEEDED",
+    UNKNOWN_ERROR = "UNKNOWN_ERROR"
+}
+/**
+ * Enhanced error class for x402 payment processing
+ */
+declare class X402Error extends Error {
+    readonly code: X402ErrorCode;
+    readonly details?: any;
+    response?: any;
+    request?: any;
+    constructor(message: string, code?: X402ErrorCode, details?: any);
+    /**
+     * Create X402Error from an existing error
+     */
+    static fromError(error: any, code?: X402ErrorCode): X402Error;
+}
+/**
+ * Typed response wrapper for x402 requests
+ * Extends AxiosResponse with payment-specific fields
+ */
+interface X402Response<T = any> extends AxiosResponse<T> {
+    /**
+     * Payment proof if payment was processed during this request
+     */
+    paymentProof?: PaymentProof;
+    /**
+     * Whether payment was required and processed
+     */
+    paymentProcessed?: boolean;
+}
 
 /**
  * Creates an axios instance with x402 payment interceptor
@@ -172,4 +253,121 @@ interface PaymentProcessorResponse {
  */
 declare function createX402Client(config?: X402ClientConfig): AxiosInstance;
 
-export { type PaymentProcessorResponse, type PaymentProof, type PaymentRequirements, type X402ClientConfig, createX402Client };
+/**
+ * Network preset configurations
+ */
+type NetworkPreset = 'push-testnet' | 'push-mainnet';
+/**
+ * Get preset configuration for a network
+ * @param network - Network preset name ('push-testnet' or 'push-mainnet')
+ * @returns Partial configuration object with network-specific values
+ */
+declare function getPresetConfig(network: NetworkPreset): Partial<X402ClientConfig>;
+
+/**
+ * Builder class for creating x402 clients with a fluent API
+ *
+ * @example
+ * ```typescript
+ * const client = X402ClientBuilder
+ *   .forTestnet()
+ *   .withWallet(walletProvider)
+ *   .withStatusCallback((status) => console.log(status))
+ *   .build();
+ * ```
+ */
+declare class X402ClientBuilder {
+    private config;
+    /**
+     * Create a builder instance for Push Chain testnet
+     */
+    static forTestnet(): X402ClientBuilder;
+    /**
+     * Create a builder instance for Push Chain mainnet
+     */
+    static forMainnet(): X402ClientBuilder;
+    /**
+     * Create a builder instance with custom network preset
+     */
+    static forNetwork(network: NetworkPreset): X402ClientBuilder;
+    /**
+     * Create a builder instance with custom configuration
+     */
+    static withConfig(config: Partial<X402ClientConfig>): X402ClientBuilder;
+    /**
+     * Set wallet provider for browser/client-side transactions
+     */
+    withWallet(walletProvider: any): X402ClientBuilder;
+    /**
+     * Set private key for server-side/agent transactions
+     * ⚠️ WARNING: Only use in secure server-side environments!
+     */
+    withPrivateKey(privateKey: string): X402ClientBuilder;
+    /**
+     * Set Universal Signer for multi-chain support
+     */
+    withUniversalSigner(universalSigner: any): X402ClientBuilder;
+    /**
+     * Set payment status callback
+     */
+    withStatusCallback(callback: (status: string) => void): X402ClientBuilder;
+    /**
+     * Set base URL for API calls
+     */
+    withBaseURL(baseURL: string): X402ClientBuilder;
+    /**
+     * Set facilitator contract address
+     */
+    withFacilitatorAddress(address: string): X402ClientBuilder;
+    /**
+     * Set chain ID
+     */
+    withChainId(chainId: number | string): X402ClientBuilder;
+    /**
+     * Set Push Chain RPC URL
+     */
+    withRpcUrl(rpcUrl: string): X402ClientBuilder;
+    /**
+     * Set chain RPC mapping for multi-chain support
+     */
+    withChainRpcMap(chainRpcMap: Record<string | number, string>): X402ClientBuilder;
+    /**
+     * Set custom payment endpoint
+     */
+    withPaymentEndpoint(endpoint: string): X402ClientBuilder;
+    /**
+     * Enable debug mode for detailed logging
+     */
+    withDebug(enabled?: boolean): X402ClientBuilder;
+    /**
+     * Set custom axios configuration
+     */
+    withAxiosConfig(axiosConfig: X402ClientConfig['axiosConfig']): X402ClientBuilder;
+    /**
+     * Build and return the configured x402 client
+     * The createX402Client function will handle merging with defaults and env vars
+     */
+    build(): AxiosInstance;
+}
+
+/**
+ * Load configuration from environment variables
+ * Returns a partial config object with values from env vars
+ */
+declare function loadConfigFromEnv(): Partial<X402ClientConfig>;
+/**
+ * Get default configuration values
+ */
+declare function getDefaultConfig(): Partial<X402ClientConfig>;
+/**
+ * Merge configuration with defaults and environment variables
+ * Priority: userConfig > envVars > defaults
+ */
+declare function mergeConfig(userConfig?: X402ClientConfig): X402ClientConfig;
+/**
+ * Create a configuration object with sensible defaults
+ * This is a convenience function that merges user config with defaults and env vars
+ */
+declare function createConfig(userConfig?: X402ClientConfig): X402ClientConfig;
+
+export { type ChainInfo, type NetworkPreset$1 as NetworkPreset, type PaymentProcessorResponse, type PaymentProof, type PaymentRequirements, type UniversalSigner, type WalletProvider, X402ClientBuilder, type X402ClientConfig, X402Error, X402ErrorCode, type X402Response, createConfig, createX402Client, getDefaultConfig, getPresetConfig, loadConfigFromEnv, mergeConfig };

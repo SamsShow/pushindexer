@@ -216,6 +216,149 @@ Your 402 response must include:
 
 ---
 
+## New Features: Simplified Configuration
+
+The SDK now supports multiple ways to configure it, making it much easier to use:
+
+### 1. Environment Variables (Recommended for Production)
+
+Set environment variables and the SDK will automatically use them:
+
+```bash
+# .env file or environment variables
+PUSH_X402_FACILITATOR_ADDRESS=0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7
+PUSH_X402_CHAIN_ID=42101
+PUSH_X402_RPC_URL=https://evm.rpc-testnet-donut-node1.push.org/
+PUSH_X402_PRIVATE_KEY=your_private_key_here  # Server-side only!
+```
+
+```typescript
+import { createX402Client } from 'push-x402';
+
+// SDK automatically reads from environment variables
+const client = createX402Client({
+  walletProvider: provider, // Only payment method needs to be provided
+});
+
+// Or with private key (server-side)
+const client = createX402Client({
+  // privateKey is read from PUSH_X402_PRIVATE_KEY automatically
+});
+```
+
+### 2. Network Presets
+
+Use preset configurations for common networks:
+
+```typescript
+import { createX402Client } from 'push-x402';
+
+// Push Chain testnet (default)
+const client = createX402Client({
+  network: 'push-testnet',
+  walletProvider: provider,
+});
+
+// Push Chain mainnet
+const client = createX402Client({
+  network: 'push-mainnet',
+  walletProvider: provider,
+});
+```
+
+### 3. Builder Pattern (Fluent API)
+
+Use the builder pattern for a more readable configuration:
+
+```typescript
+import { X402ClientBuilder } from 'push-x402';
+
+// Fluent API - much more readable!
+const client = X402ClientBuilder
+  .forTestnet()
+  .withWallet(provider)
+  .withStatusCallback((status) => console.log(status))
+  .withBaseURL('https://api.example.com')
+  .withDebug(true)
+  .build();
+
+// Or for mainnet
+const client = X402ClientBuilder
+  .forMainnet()
+  .withPrivateKey(process.env.PRIVATE_KEY)
+  .build();
+```
+
+### 4. Debug Mode
+
+Enable detailed logging to see exactly what's happening:
+
+```typescript
+const client = createX402Client({
+  walletProvider: provider,
+  debug: true, // Enable debug logging
+});
+
+// Or with builder
+const client = X402ClientBuilder
+  .forTestnet()
+  .withWallet(provider)
+  .withDebug(true)
+  .build();
+```
+
+Debug mode logs:
+- Client creation details
+- 402 response detection
+- Payment requirements validation
+- Payment processing steps
+- Transaction details
+- Retry attempts
+- Error details with error codes
+
+### 5. Enhanced Error Handling
+
+The SDK now provides structured errors with error codes:
+
+```typescript
+import { X402Error, X402ErrorCode } from 'push-x402';
+
+try {
+  const response = await client.get('/protected/resource');
+} catch (error) {
+  if (error instanceof X402Error) {
+    switch (error.code) {
+      case X402ErrorCode.PAYMENT_REQUIRED:
+        // Handle payment required
+        break;
+      case X402ErrorCode.INSUFFICIENT_FUNDS:
+        // Handle insufficient funds
+        console.error('Please add funds to your wallet');
+        break;
+      case X402ErrorCode.PAYMENT_FAILED:
+        // Handle payment failure
+        break;
+      case X402ErrorCode.NETWORK_ERROR:
+        // Handle network issues
+        break;
+      default:
+        console.error('Payment error:', error.message);
+    }
+  }
+}
+```
+
+**Error Codes:**
+- `PAYMENT_REQUIRED` - 402 response received
+- `INSUFFICIENT_FUNDS` - Wallet doesn't have enough balance
+- `PAYMENT_FAILED` - Payment processing failed
+- `INVALID_PAYMENT_REQUIREMENTS` - Invalid 402 response format
+- `PAYMENT_METHOD_NOT_AVAILABLE` - No payment method configured
+- `TRANSACTION_FAILED` - Blockchain transaction failed
+- `NETWORK_ERROR` - Network connectivity issue
+- `MAX_RETRIES_EXCEEDED` - Maximum retry attempts reached
+- `UNKNOWN_ERROR` - Unexpected error
+
 ## Configuration
 
 All configuration is **optional** - the SDK works out of the box with sensible defaults!
@@ -277,13 +420,20 @@ interface X402ClientConfig {
   privateKey?: string;
   
   /**
+   * Optional: Network preset ('push-testnet' or 'push-mainnet')
+   * When provided, automatically sets facilitatorAddress, chainId, and pushChainRpcUrl
+   * Can be overridden by explicit config values
+   */
+  network?: 'push-testnet' | 'push-mainnet';
+
+  /**
    * Optional: Wallet provider for browser/client-side transactions
    * Accepts ethers.js providers (e.g., window.ethereum from MetaMask)
    * If provided, transactions will prompt user for approval in their wallet.
    * Perfect for browser applications where users have wallet extensions.
    * Requires: npm install ethers
    */
-  walletProvider?: any; // ethers.Provider type
+  walletProvider?: WalletProvider;
   
   /**
    * Optional: Universal Signer from Push Chain SDK for multi-chain support
@@ -291,7 +441,13 @@ interface X402ClientConfig {
    * Takes priority over walletProvider/privateKey for multi-chain support.
    * Requires: npm install @pushchain/core
    */
-  universalSigner?: any; // UniversalSigner type from @pushchain/core
+  universalSigner?: UniversalSigner;
+
+  /**
+   * Optional: Enable debug mode for detailed logging
+   * When enabled, logs all payment flow steps, timing information, and transaction details
+   */
+  debug?: boolean;
   
   /**
    * Optional: Push Chain RPC URL for Universal Signer chain detection
@@ -323,8 +479,20 @@ The SDK uses these defaults:
 - **Facilitator Address**: `0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7` (Push Chain facilitator contract)
 - **Chain ID**: `42101` (Push Chain testnet)
 - **Payment Endpoint**: None (SDK calls facilitator contract directly)
+- **Base URL**: Auto-detected in browser (`window.location.origin`)
 
 **Note:** You must provide one of: `walletProvider`, `privateKey`, `universalSigner`, or `paymentEndpoint` for payments to work.
+
+### Environment Variables
+
+The SDK automatically reads from these environment variables (if set):
+
+- `PUSH_X402_FACILITATOR_ADDRESS` - Facilitator contract address
+- `PUSH_X402_CHAIN_ID` - Chain ID (number)
+- `PUSH_X402_RPC_URL` - Push Chain RPC URL
+- `PUSH_X402_PRIVATE_KEY` - Private key for server-side payments (⚠️ server-side only!)
+
+Environment variables are merged with provided config, with explicit config taking priority.
 
 ---
 
@@ -340,7 +508,7 @@ The SDK uses these defaults:
    - Retries your original request with payment proof
 4. **Server verifies payment** and returns the protected resource
 
-**The SDK calls the facilitator contract on-chain directly** - no intermediate API layer required! 🎉
+**The SDK calls the facilitator contract on-chain directly** - no intermediate API layer required!
 
 ---
 
@@ -348,14 +516,16 @@ The SDK uses these defaults:
 
 The SDK includes robust error handling:
 
-- ✅ **Validation**: Validates payment requirements before processing
-- ✅ **Retry Protection**: Prevents infinite loops (max 1 retry per request)
-- ✅ **Timeout**: 60-second timeout for blockchain transactions
-- ✅ **Clear Errors**: Descriptive error messages for debugging
-- ✅ **Status Updates**: Real-time payment status via `onPaymentStatus` callback
+- **Validation**: Validates payment requirements before processing
+- **Retry Protection**: Prevents infinite loops (max 1 retry per request)
+- **Timeout**: 60-second timeout for blockchain transactions
+- **Structured Errors**: Error codes for programmatic error handling
+- **Clear Messages**: Descriptive error messages for debugging
+- **Status Updates**: Real-time payment status via `onPaymentStatus` callback
 
-### Error Examples
+### Error Handling Examples
 
+**Basic Error Handling:**
 ```typescript
 try {
   const response = await client.get('/protected/resource');
@@ -370,16 +540,59 @@ try {
 }
 ```
 
+**Advanced Error Handling with Error Codes:**
+```typescript
+import { X402Error, X402ErrorCode } from 'push-x402';
+
+try {
+  const response = await client.get('/protected/resource');
+} catch (error) {
+  if (error instanceof X402Error) {
+    switch (error.code) {
+      case X402ErrorCode.INSUFFICIENT_FUNDS:
+        alert('Please add funds to your wallet');
+        break;
+      case X402ErrorCode.NETWORK_ERROR:
+        alert('Network error. Please check your connection.');
+        break;
+      case X402ErrorCode.PAYMENT_FAILED:
+        console.error('Payment failed:', error.message);
+        console.error('Details:', error.details);
+        break;
+      default:
+        console.error('Payment error:', error.code, error.message);
+    }
+  } else {
+    // Non-payment errors
+    console.error('Request failed:', error.message);
+  }
+}
+```
+
+### Error Codes Reference
+
+| Code | Description | Suggested Action |
+|------|-------------|------------------|
+| `PAYMENT_REQUIRED` | 402 response received | Payment will be processed automatically |
+| `INSUFFICIENT_FUNDS` | Wallet balance too low | Ask user to add funds |
+| `PAYMENT_FAILED` | Payment processing failed | Check error details, retry if appropriate |
+| `INVALID_PAYMENT_REQUIREMENTS` | Invalid 402 response format | Check server implementation |
+| `PAYMENT_METHOD_NOT_AVAILABLE` | No payment method configured | Provide walletProvider, privateKey, or paymentEndpoint |
+| `TRANSACTION_FAILED` | Blockchain transaction failed | Check transaction on explorer, verify gas |
+| `NETWORK_ERROR` | Network connectivity issue | Check internet connection, RPC endpoint |
+| `MAX_RETRIES_EXCEEDED` | Too many retry attempts | Investigate why payment keeps failing |
+| `UNKNOWN_ERROR` | Unexpected error | Check error details, report if needed |
+
 ---
 
 ## Browser and Node.js Support
 
-Works everywhere axios works! ✅
+Works everywhere axios works!
 
-- ✅ **Browser**: React, Vue, Angular, vanilla JS, etc.
-- ✅ **Node.js**: Express, Fastify, Next.js, etc.
-- ✅ **TypeScript**: Full type support
-- ✅ **ESM & CommonJS**: Both module formats supported
+- **Browser**: React, Vue, Angular, vanilla JS, etc.
+- **Node.js**: Express, Fastify, Next.js, etc.
+- **TypeScript**: Full type support
+- **ESM & CommonJS**: Both module formats supported
 
 ---
 
@@ -503,7 +716,7 @@ The SDK detects chains in this order:
 
 The SDK supports **four payment methods** - choose based on your use case:
 
-#### Option 1: Universal Signer (Multi-Chain) 🌐
+#### Option 1: Universal Signer (Multi-Chain)
 
 Perfect for multi-chain applications. Works across all Push Chain supported networks automatically.
 
@@ -527,15 +740,15 @@ const response = await client.get('/protected/resource');
 ```
 
 **Use Cases:**
-- ✅ Multi-chain applications
-- ✅ Cross-chain payments
-- ✅ Universal dApps
-- ✅ Push Chain ecosystem
+- Multi-chain applications
+- Cross-chain payments
+- Universal dApps
+- Push Chain ecosystem
 
 **Requirements:**
 - Install `@pushchain/core`: `npm install @pushchain/core`
 
-#### Option 2: Private Key (Agents/Server-Side) ⚡
+#### Option 2: Private Key (Agents/Server-Side)
 
 Perfect for automated agents and server-side applications. **Calls facilitator contract directly** - no API needed!
 
@@ -556,23 +769,23 @@ const response = await client.get('/protected/resource');
 ```
 
 **Use Cases:**
-- ✅ Automated agents and bots
-- ✅ Server-side applications (Node.js, API routes)
-- ✅ Background jobs and scheduled tasks
-- ✅ Testing and development
+- Automated agents and bots
+- Server-side applications (Node.js, API routes)
+- Background jobs and scheduled tasks
+- Testing and development
 
 **How it works:**
-- ✅ SDK creates wallet from private key
-- ✅ Calls facilitator contract `facilitateNativeTransfer()` directly
-- ✅ No serverless API dependency
-- ✅ Works completely offline (just needs RPC connection)
+- SDK creates wallet from private key
+- Calls facilitator contract `facilitateNativeTransfer()` directly
+- No serverless API dependency
+- Works completely offline (just needs RPC connection)
 
 **Security:**
-- ✅ Always use environment variables
-- ✅ Never commit private keys to git
-- ✅ Use HTTPS only
+- Always use environment variables
+- Never commit private keys to git
+- Use HTTPS only
 
-#### Option 3: Wallet Provider (Browser/Client-Side) 🔐
+#### Option 3: Wallet Provider (Browser/Client-Side)
 
 Perfect for browser applications. **Calls facilitator contract directly** - users approve transactions in their wallet.
 
@@ -595,16 +808,16 @@ const response = await client.get('/protected/resource');
 ```
 
 **Use Cases:**
-- ✅ Browser applications (React, Vue, etc.)
-- ✅ User-facing web apps
-- ✅ DApps and DeFi applications
-- ✅ When users want wallet control
+- Browser applications (React, Vue, etc.)
+- User-facing web apps
+- DApps and DeFi applications
+- When users want wallet control
 
 **How it works:**
-- ✅ SDK gets signer from wallet provider
-- ✅ Calls facilitator contract `facilitateNativeTransfer()` directly
-- ✅ User approves transaction in their wallet
-- ✅ No serverless API dependency
+- SDK gets signer from wallet provider
+- Calls facilitator contract `facilitateNativeTransfer()` directly
+- User approves transaction in their wallet
+- No serverless API dependency
 
 **Requirements:**
 - Install ethers: `npm install ethers`
@@ -625,9 +838,9 @@ const response = await client.get('/protected/resource');
 ```
 
 **Use Cases:**
-- ✅ When you have your own payment processing server
-- ✅ Custom payment infrastructure
-- ✅ Legacy systems integration
+- When you have your own payment processing server
+- Custom payment infrastructure
+- Legacy systems integration
 
 **Note:** Direct facilitator contract calls (Options 1-3) are recommended - no serverless dependency!
 
@@ -660,22 +873,24 @@ const client = createX402Client({
 
 ### For Buyers
 
-1. ✅ **Use baseURL** for cleaner code
-2. ✅ **Handle errors gracefully** - show user-friendly messages
-3. ✅ **Use payment status callback** for better UX
-4. ✅ **Choose the right payment method**:
+1. **Use baseURL** for cleaner code
+2. **Handle errors gracefully** - show user-friendly messages
+3. **Use payment status callback** for better UX
+4. **Choose the right payment method**:
    - Browser apps → `walletProvider`
    - Server-side/agents → `privateKey`
    - Multi-chain → `universalSigner`
-5. ✅ **Don't expose private keys** - only use in secure server-side environments
+5. **Don't expose private keys** - only use in secure server-side environments
+6. **Use environment variables** for production configuration
+7. **Enable debug mode** during development for troubleshooting
 
 ### For Sellers
 
-1. ✅ **Always verify payments** in production (check transaction on-chain)
-2. ✅ **Use exact amounts** to prevent overpayment
-3. ✅ **Include all required fields** in 402 responses
-4. ✅ **Handle CORS** properly for browser clients
-5. ✅ **Log transactions** for auditing
+1. **Always verify payments** in production (check transaction on-chain)
+2. **Use exact amounts** to prevent overpayment
+3. **Include all required fields** in 402 responses
+4. **Handle CORS** properly for browser clients
+5. **Log transactions** for auditing
 
 ---
 
@@ -683,22 +898,23 @@ const client = createX402Client({
 
 ### Payment Processing Fails
 
-- ✅ Verify you provided one of: `walletProvider`, `privateKey`, `universalSigner`, or `paymentEndpoint`
-- ✅ Check that ethers.js is installed if using `walletProvider` or `privateKey`
-- ✅ Verify your wallet has sufficient balance
-- ✅ Check network connectivity and RPC endpoint
-- ✅ Ensure facilitator contract address is correct
+- Verify you provided one of: `walletProvider`, `privateKey`, `universalSigner`, or `paymentEndpoint`
+- Check that ethers.js is installed if using `walletProvider` or `privateKey`
+- Verify your wallet has sufficient balance
+- Check network connectivity and RPC endpoint
+- Ensure facilitator contract address is correct
+- Enable debug mode to see detailed error information
 
 ### 402 Response Not Handled
 
-- ✅ Verify response status code is exactly 402
-- ✅ Check that payment requirements include `recipient` and `amount`
-- ✅ Ensure response is valid JSON
+- Verify response status code is exactly 402
+- Check that payment requirements include `recipient` and `amount`
+- Ensure response is valid JSON
 
 ### Infinite Retry Loop
 
-- ✅ SDK automatically prevents this (max 1 retry)
-- ✅ Check that payment processor returns valid transaction hash
+- SDK automatically prevents this (max 1 retry)
+- Check that payment processor returns valid transaction hash
 
 ---
 
@@ -718,6 +934,113 @@ Creates an axios instance with x402 payment interceptor.
 ```typescript
 const client = createX402Client();
 const response = await client.get('https://api.example.com/resource');
+```
+
+### `X402ClientBuilder`
+
+Builder class for creating x402 clients with a fluent API.
+
+**Static Methods:**
+- `X402ClientBuilder.forTestnet()` - Create builder for Push Chain testnet
+- `X402ClientBuilder.forMainnet()` - Create builder for Push Chain mainnet
+- `X402ClientBuilder.forNetwork(network)` - Create builder for specific network
+- `X402ClientBuilder.withConfig(config)` - Create builder with custom config
+
+**Instance Methods:**
+- `.withWallet(provider)` - Set wallet provider
+- `.withPrivateKey(key)` - Set private key (server-side)
+- `.withUniversalSigner(signer)` - Set Universal Signer
+- `.withStatusCallback(callback)` - Set payment status callback
+- `.withBaseURL(url)` - Set base URL
+- `.withFacilitatorAddress(address)` - Set facilitator address
+- `.withChainId(id)` - Set chain ID
+- `.withRpcUrl(url)` - Set RPC URL
+- `.withChainRpcMap(map)` - Set chain RPC mapping
+- `.withPaymentEndpoint(endpoint)` - Set payment endpoint
+- `.withDebug(enabled)` - Enable/disable debug mode
+- `.withAxiosConfig(config)` - Set custom axios config
+- `.build()` - Build and return the configured client
+
+**Example:**
+```typescript
+import { X402ClientBuilder } from 'push-x402';
+
+const client = X402ClientBuilder
+  .forTestnet()
+  .withWallet(provider)
+  .withStatusCallback((status) => console.log(status))
+  .withDebug(true)
+  .build();
+```
+
+### `getPresetConfig(network)`
+
+Get preset configuration for a network.
+
+**Parameters:**
+- `network`: `'push-testnet' | 'push-mainnet'` - Network preset name
+
+**Returns:**
+- `Partial<X402ClientConfig>` - Partial configuration object
+
+**Example:**
+```typescript
+import { getPresetConfig } from 'push-x402';
+
+const testnetConfig = getPresetConfig('push-testnet');
+const client = createX402Client({
+  ...testnetConfig,
+  walletProvider: provider,
+});
+```
+
+### `createConfig(userConfig?)`
+
+Create a configuration object with sensible defaults and environment variable support.
+
+**Parameters:**
+- `userConfig` (optional): `X402ClientConfig` - User configuration
+
+**Returns:**
+- `X402ClientConfig` - Merged configuration object
+
+**Example:**
+```typescript
+import { createConfig } from 'push-x402';
+
+const config = createConfig({
+  walletProvider: provider,
+});
+const client = createX402Client(config);
+```
+
+### `X402Error`
+
+Enhanced error class for x402 payment processing.
+
+**Properties:**
+- `code`: `X402ErrorCode` - Error code
+- `message`: `string` - Error message
+- `details`: `any` - Additional error details
+- `response`: `any` - Axios response (if available)
+- `request`: `any` - Axios request (if available)
+
+**Static Methods:**
+- `X402Error.fromError(error, code?)` - Create X402Error from existing error
+
+**Example:**
+```typescript
+import { X402Error, X402ErrorCode } from 'push-x402';
+
+try {
+  await client.get('/protected/resource');
+} catch (error) {
+  if (error instanceof X402Error) {
+    console.error('Error code:', error.code);
+    console.error('Error message:', error.message);
+    console.error('Error details:', error.details);
+  }
+}
 ```
 
 ---
