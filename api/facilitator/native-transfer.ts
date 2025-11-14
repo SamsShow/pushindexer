@@ -1,6 +1,7 @@
 // Use require for Vercel serverless compatibility - must be at top level
+// @ts-ignore - Vercel serverless functions use CommonJS
 const ethers = require("ethers");
-const { VercelRequest, VercelResponse } = require("@vercel/node");
+import type { VercelRequest, VercelResponse } from "@vercel/node";
 
 const FACILITATOR_ABI = [
   "function facilitateNativeTransfer(address recipient, uint256 amount) external payable",
@@ -66,4 +67,7 @@ module.exports = async function handler(req: VercelRequest, res: VercelResponse)
     });
   }
 }
+
+// Make this file a module to avoid TypeScript scope conflicts
+export {};
 
