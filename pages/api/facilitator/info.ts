@@ -1,4 +1,5 @@
-import { ethers } from "ethers";
+// Use require for Vercel serverless compatibility
+const { ethers } = require("ethers");
 import type { NextApiRequest, NextApiResponse } from "next";
 
 const FACILITATOR_ABI = [
