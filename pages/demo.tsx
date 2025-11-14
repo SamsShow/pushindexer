@@ -18,9 +18,9 @@ interface PaymentState {
   paymentMethod?: 'server-side' | 'universal-signer';
 }
 
-// Hardcoded public facilitator endpoint
+// Hardcoded public facilitator address
 const PUBLIC_FACILITATOR_ADDRESS = '0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7';
-const FACILITATOR_API = 'https://pushindexer.vercel.app/api/facilitator/info';
+const FACILITATOR_CHAIN_ID = '42101';
 
 export default function Demo() {
   const [paymentState, setPaymentState] = useState<PaymentState>({ status: 'idle' });
@@ -93,20 +93,12 @@ export default function Demo() {
         }
       }
 
-      // Fetch facilitator info if we have a transaction hash
-      let facilitatorInfo = null;
-
-      if (txHash) {
-        try {
-          // Fetch facilitator info
-          const facilitatorResponse = await fetch(FACILITATOR_API);
-          if (facilitatorResponse.ok) {
-            facilitatorInfo = await facilitatorResponse.json();
-          }
-        } catch (error) {
-          console.warn('Failed to fetch facilitator info:', error);
-        }
-      }
+      // Use hardcoded facilitator info (no API call needed)
+      const facilitatorInfo = {
+        contractAddress: PUBLIC_FACILITATOR_ADDRESS,
+        chainId: FACILITATOR_CHAIN_ID,
+        network: 'push',
+      };
 
       setPaymentState({
         status: 'success',
@@ -467,7 +459,7 @@ export default function Demo() {
       {/* Facilitator Information Section */}
       {paymentState.status === 'success' && paymentState.facilitatorInfo && (
         <div className="panel" style={{ marginTop: '30px' }}>
-          <h2>Facilitator Contract Info</h2>
+          <h2>Facilitator Contract Information</h2>
           
           <div className="status-section">
             <div className="info-item">
@@ -480,20 +472,10 @@ export default function Demo() {
               <div className="info-label">Chain ID</div>
               <div className="info-value">{paymentState.facilitatorInfo.chainId}</div>
             </div>
-            {paymentState.facilitatorInfo.totalFacilitated && (
-              <div className="info-item">
-                <div className="info-label">Total Facilitated</div>
-                <div className="info-value">{paymentState.facilitatorInfo.totalFacilitated} PUSH</div>
-              </div>
-            )}
-            {paymentState.facilitatorInfo.owner && (
-              <div className="info-item">
-                <div className="info-label">Owner</div>
-                <div className="info-value" style={{ fontSize: '12px', wordBreak: 'break-all' }}>
-                  {paymentState.facilitatorInfo.owner}
-                </div>
-              </div>
-            )}
+            <div className="info-item">
+              <div className="info-label">Network</div>
+              <div className="info-value">{paymentState.facilitatorInfo.network || 'push'}</div>
+            </div>
           </div>
         </div>
       )}
