@@ -1,4 +1,5 @@
-import { ethers } from "ethers";
+// Use require for Vercel serverless compatibility - must be at top level
+const ethers = require("ethers");
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
 const FACILITATOR_ABI = [
