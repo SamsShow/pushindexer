@@ -412,6 +412,46 @@ export default function Demo() {
                 </div>
               )}
 
+              {/* Facilitator Info - Always show on success */}
+              {paymentState.facilitatorInfo && (
+                <div style={{ 
+                  marginTop: '24px',
+                  padding: '16px',
+                  background: '#f0f9ff',
+                  border: '1px solid #bae6fd',
+                  borderRadius: '8px'
+                }}>
+                  <h3 style={{ 
+                    fontSize: '14px', 
+                    marginBottom: '12px', 
+                    color: '#0369a1', 
+                    fontWeight: '600',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px'
+                  }}>
+                    Facilitator Contract
+                  </h3>
+                  <div style={{ fontSize: '13px', color: '#0c4a6e' }}>
+                    <div style={{ marginBottom: '8px' }}>
+                      <strong>Address:</strong>{' '}
+                      <span style={{ 
+                        fontFamily: 'Monaco, Menlo, monospace',
+                        fontSize: '11px',
+                        wordBreak: 'break-all'
+                      }}>
+                        {paymentState.facilitatorInfo.contractAddress}
+                      </span>
+                    </div>
+                    <div style={{ marginBottom: '8px' }}>
+                      <strong>Chain ID:</strong> {paymentState.facilitatorInfo.chainId}
+                    </div>
+                    <div>
+                      <strong>Network:</strong> {paymentState.facilitatorInfo.network || 'push'}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <button 
                 onClick={handleStartOver}
                 style={{ 
@@ -456,29 +496,6 @@ export default function Demo() {
         </div>
       </div>
 
-      {/* Facilitator Information Section */}
-      {paymentState.status === 'success' && paymentState.facilitatorInfo && (
-        <div className="panel" style={{ marginTop: '30px' }}>
-          <h2>Facilitator Contract Information</h2>
-          
-          <div className="status-section">
-            <div className="info-item">
-              <div className="info-label">Contract Address</div>
-              <div className="info-value" style={{ fontSize: '12px', wordBreak: 'break-all' }}>
-                {paymentState.facilitatorInfo.contractAddress}
-              </div>
-            </div>
-            <div className="info-item">
-              <div className="info-label">Chain ID</div>
-              <div className="info-value">{paymentState.facilitatorInfo.chainId}</div>
-            </div>
-            <div className="info-item">
-              <div className="info-label">Network</div>
-              <div className="info-value">{paymentState.facilitatorInfo.network || 'push'}</div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* How x402Axios works section */}
       <div className="explanation">
