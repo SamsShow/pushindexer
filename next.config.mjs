@@ -4,7 +4,7 @@ const nextConfig = {
   transpilePackages: ['@pushchain/x402-sdk'],
   // Fix Vercel serverless function bundling issues
   serverExternalPackages: ['pg', '@pushchain/core'],
-  // Disable Turbopack for now to use webpack (better compatibility)
+  // Use webpack instead of Turbopack for better compatibility
   webpack: (config, { isServer }) => {
     if (isServer) {
       // Ensure proper module resolution for serverless functions
@@ -16,6 +16,8 @@ const nextConfig = {
     }
     return config;
   },
+  // Silence Turbopack warning since we're using webpack
+  turbopack: {},
 }
 
 export default nextConfig
