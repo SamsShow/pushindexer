@@ -19,13 +19,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    console.error('❌ METHOD NOT ALLOWED:', {
+      receivedMethod: req.method,
+      allowedMethods: ['POST', 'OPTIONS'],
+      url: req.url,
+      headers: req.headers,
+    });
+    return res.status(405).json({ 
+      error: "Method not allowed",
+      receivedMethod: req.method,
+      allowedMethods: ['POST', 'OPTIONS'],
+    });
   }
 
   // Log to verify this route is being hit
   console.log('✅ NEXT.JS PAYMENT PROCESS ENDPOINT CALLED', {
     method: req.method,
     url: req.url,
+    headers: {
+      'content-type': req.headers['content-type'],
+      'user-agent': req.headers['user-agent'],
+      origin: req.headers.origin,
+    },
     body: req.body,
     hasRpcUrl: !!process.env.PUSH_CHAIN_RPC_URL,
     hasContractAddress: !!process.env.FACILITATOR_CONTRACT_ADDRESS,

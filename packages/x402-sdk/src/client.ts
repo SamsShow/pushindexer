@@ -479,8 +479,10 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
           // Option 3: Use private key (agents/server-side) - fallback if Universal Signer not available
           if (!paymentResult && privateKey) {
             // Use baseURL if available, otherwise use paymentEndpoint
+            // Ensure no double slashes in URL
+            const baseUrlClean = baseURL?.endsWith('/') ? baseURL.slice(0, -1) : baseURL;
             const endpointUrl = baseURL 
-              ? `${baseURL}/api/payment/process`
+              ? `${baseUrlClean}/api/payment/process`
               : paymentEndpoint;
 
             const paymentPayload: any = {
@@ -488,6 +490,13 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               amount,
               privateKey,
             };
+
+            // Enhanced logging for debugging
+            console.log('[x402-sdk] Making payment request with privateKey:', {
+              method: 'POST',
+              url: endpointUrl,
+              payload: { ...paymentPayload, privateKey: '[REDACTED]' },
+            });
 
             const paymentResponse = await axios.post<PaymentProcessorResponse>(
               endpointUrl,
@@ -521,8 +530,10 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
           // Option 4: Use public endpoint (requires server-side setup)
           if (!paymentResult) {
             // Use baseURL if available, otherwise use paymentEndpoint
+            // Ensure no double slashes in URL
+            const baseUrlClean = baseURL?.endsWith('/') ? baseURL.slice(0, -1) : baseURL;
             const endpointUrl = baseURL 
-              ? `${baseURL}/api/payment/process`
+              ? `${baseUrlClean}/api/payment/process`
               : paymentEndpoint;
 
             const paymentPayload: any = {
@@ -531,6 +542,13 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               chainId: chainInfo.chainId,
               rpcUrl: chainInfo.rpcUrl,
             };
+
+            // Enhanced logging for debugging
+            console.log('[x402-sdk] Making payment request:', {
+              method: 'POST',
+              url: endpointUrl,
+              payload: { ...paymentPayload, rpcUrl: paymentPayload.rpcUrl ? '[REDACTED]' : undefined },
+            });
 
             const paymentResponse = await axios.post<PaymentProcessorResponse>(
               endpointUrl,
@@ -600,6 +618,16 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
             || paymentError.message 
             || 'Unknown payment processing error';
           
+          // Enhanced error logging
+          console.error('[x402-sdk] Payment processing error:', {
+            message: errorMessage,
+            status: paymentError.response?.status,
+            statusText: paymentError.response?.statusText,
+            method: paymentError.config?.method,
+            url: paymentError.config?.url,
+            responseData: paymentError.response?.data,
+          });
+          
           if (onPaymentStatus) {
             onPaymentStatus(`Payment failed: ${errorMessage}`);
           }
@@ -611,6 +639,12 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
           }
           if (paymentError.request) {
             (enhancedError as any).request = paymentError.request;
+          }
+          if (paymentError.config) {
+            (enhancedError as any).config = {
+              method: paymentError.config.method,
+              url: paymentError.config.url,
+            };
           }
           
           return Promise.reject(enhancedError);

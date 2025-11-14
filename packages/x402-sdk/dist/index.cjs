@@ -334,12 +334,18 @@ function createX402Client(config = {}) {
             };
           }
           if (!paymentResult && privateKey) {
-            const endpointUrl = baseURL ? `${baseURL}/api/payment/process` : paymentEndpoint;
+            const baseUrlClean = baseURL?.endsWith("/") ? baseURL.slice(0, -1) : baseURL;
+            const endpointUrl = baseURL ? `${baseUrlClean}/api/payment/process` : paymentEndpoint;
             const paymentPayload = {
               recipient,
               amount,
               privateKey
             };
+            console.log("[x402-sdk] Making payment request with privateKey:", {
+              method: "POST",
+              url: endpointUrl,
+              payload: { ...paymentPayload, privateKey: "[REDACTED]" }
+            });
             const paymentResponse = await import_axios.default.post(
               endpointUrl,
               paymentPayload,
@@ -364,13 +370,19 @@ function createX402Client(config = {}) {
             paymentResult = paymentResponse.data;
           }
           if (!paymentResult) {
-            const endpointUrl = baseURL ? `${baseURL}/api/payment/process` : paymentEndpoint;
+            const baseUrlClean = baseURL?.endsWith("/") ? baseURL.slice(0, -1) : baseURL;
+            const endpointUrl = baseURL ? `${baseUrlClean}/api/payment/process` : paymentEndpoint;
             const paymentPayload = {
               recipient,
               amount,
               chainId: chainInfo.chainId,
               rpcUrl: chainInfo.rpcUrl
             };
+            console.log("[x402-sdk] Making payment request:", {
+              method: "POST",
+              url: endpointUrl,
+              payload: { ...paymentPayload, rpcUrl: paymentPayload.rpcUrl ? "[REDACTED]" : void 0 }
+            });
             const paymentResponse = await import_axios.default.post(
               endpointUrl,
               paymentPayload,
@@ -420,6 +432,14 @@ function createX402Client(config = {}) {
           return axiosInstance.request(originalConfig);
         } catch (paymentError) {
           const errorMessage = paymentError.response?.data?.message || paymentError.message || "Unknown payment processing error";
+          console.error("[x402-sdk] Payment processing error:", {
+            message: errorMessage,
+            status: paymentError.response?.status,
+            statusText: paymentError.response?.statusText,
+            method: paymentError.config?.method,
+            url: paymentError.config?.url,
+            responseData: paymentError.response?.data
+          });
           if (onPaymentStatus) {
             onPaymentStatus(`Payment failed: ${errorMessage}`);
           }
@@ -429,6 +449,12 @@ function createX402Client(config = {}) {
           }
           if (paymentError.request) {
             enhancedError.request = paymentError.request;
+          }
+          if (paymentError.config) {
+            enhancedError.config = {
+              method: paymentError.config.method,
+              url: paymentError.config.url
+            };
           }
           return Promise.reject(enhancedError);
         }
