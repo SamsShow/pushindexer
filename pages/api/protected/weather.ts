@@ -57,15 +57,33 @@ export default async function handler(
       const chainId = chainIdEnv ? parseInt(chainIdEnv, 10) : DEFAULT_CHAIN_ID;
       const finalChainId = isNaN(chainId) ? DEFAULT_CHAIN_ID : chainId;
       
-      return res.status(402).json({
+      // Get token and chain from query params (for testing)
+      const token = req.query.token as string | undefined;
+      const requestedChainId = req.query.chainId as string | undefined;
+      const rpcUrl = req.query.rpcUrl as string | undefined;
+      
+      const paymentRequirements: any = {
         scheme: "exact",
         amount: "0.001",
-        currency: "PUSH",
+        currency: token ? "TOKEN" : "PUSH",
         recipient: sellerAddress,
         facilitator: facilitatorAddress,
         network: "push",
-        chainId: finalChainId,
-      });
+        chainId: requestedChainId ? parseInt(requestedChainId, 10) : finalChainId,
+      };
+      
+      // Include token address if provided
+      if (token && /^0x[a-fA-F0-9]{40}$/.test(token)) {
+        paymentRequirements.token = token;
+        paymentRequirements.asset = token;
+      }
+      
+      // Include RPC URL if provided (for multi-chain support)
+      if (rpcUrl) {
+        paymentRequirements.rpcUrl = rpcUrl;
+      }
+      
+      return res.status(402).json(paymentRequirements);
     }
 
     // Payment provided - return protected resource

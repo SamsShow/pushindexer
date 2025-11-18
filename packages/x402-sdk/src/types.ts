@@ -30,6 +30,7 @@ export interface PaymentRequirements {
   maxAmountRequired?: string;
   currency?: string;
   asset?: string;
+  token?: string; // ERC20 token contract address (if token payment)
   recipient?: string;
   payTo?: string;
   facilitator?: string;
@@ -61,6 +62,7 @@ export interface PaymentProof {
   chainId: string | number;
   txHash: string;
   timestamp: number;
+  token?: string; // ERC20 token contract address (if token payment)
 }
 
 /**

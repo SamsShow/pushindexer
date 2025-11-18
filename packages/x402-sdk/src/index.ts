@@ -3,6 +3,16 @@ export { X402ClientBuilder } from './builder';
 export { getPresetConfig } from './presets';
 export { createConfig, mergeConfig, getDefaultConfig, loadConfigFromEnv } from './config';
 export {
+  getTokenBySymbol,
+  getTokenByAddress,
+  getSupportedTokens,
+  getSupportedChains,
+  getChainByNamespace,
+  SUPPORTED_TOKENS,
+  SUPPORTED_CHAINS,
+  PUSH_CHAIN_DONUT_TESTNET,
+} from './tokens';
+export {
   X402Error,
   X402ErrorCode,
 } from './types';
@@ -17,4 +27,8 @@ export type {
   X402Response,
   ChainInfo,
 } from './types';
+export type {
+  TokenInfo,
+  SupportedChain,
+} from './tokens';
 

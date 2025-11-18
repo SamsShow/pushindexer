@@ -1,5 +1,11 @@
 import { useState, useEffect } from 'react';
-import { createX402Client, X402ClientBuilder, X402Error, X402ErrorCode } from '../packages/x402-sdk/src/index';
+import { 
+  createX402Client, 
+  X402ClientBuilder, 
+  X402Error, 
+  X402ErrorCode,
+  getSupportedTokens
+} from '../packages/x402-sdk/src/index';
 import type { AxiosResponse } from 'axios';
 
 interface PaymentState {
@@ -33,6 +39,21 @@ export default function Demo() {
   const [isMounted, setIsMounted] = useState<boolean>(false);
   const [hasEthereum, setHasEthereum] = useState<boolean>(false);
   const [showToast, setShowToast] = useState<boolean>(false);
+  const [paymentType, setPaymentType] = useState<'native' | 'token'>('native');
+  const [selectedToken, setSelectedToken] = useState<string>('');
+  const [selectedChainId, setSelectedChainId] = useState<string>('42101');
+  const [customRpcUrl, setCustomRpcUrl] = useState<string>('');
+
+  // Get supported tokens from SDK
+  // These are provided by the SDK based on Push Chain documentation
+  // Source: https://push.org/docs/chain/setup/chain-config/
+  const supportedTokens = getSupportedTokens().filter(token => 
+    // Filter out native token (PC) as it's handled separately
+    token.symbol !== 'PC'
+  );
+
+  // Get token address from selection
+  const tokenAddress = selectedToken || '';
 
   // Set mounted state after hydration to avoid SSR mismatch
   useEffect(() => {
@@ -191,8 +212,26 @@ export default function Demo() {
 
       const startTime = Date.now();
       
+      // Build query params for payment requirements
+      const queryParams: Record<string, string> = {};
+      if (paymentType === 'token' && tokenAddress && tokenAddress !== '0x0000000000000000000000000000000000000000') {
+        queryParams.token = tokenAddress;
+      } else if (paymentType === 'token' && (!tokenAddress || tokenAddress === '0x0000000000000000000000000000000000000000')) {
+        throw new Error('Please select a valid token. Token addresses need to be configured.');
+      }
+      if (selectedChainId && selectedChainId !== '42101') {
+        queryParams.chainId = selectedChainId;
+      }
+      if (customRpcUrl) {
+        queryParams.rpcUrl = customRpcUrl;
+      }
+      
+      const queryString = Object.keys(queryParams).length > 0
+        ? '?' + new URLSearchParams(queryParams).toString()
+        : '';
+      
       // Make request to protected resource
-      const response = await client.get('/api/protected/weather');
+      const response = await client.get(`/api/protected/weather${queryString}`);
       
       const totalTime = Date.now() - startTime;
       const verificationTime = parseInt(response.headers['x-verification-time'] || '0', 10);
@@ -668,6 +707,260 @@ export default function Demo() {
                   </div>
                 )}
               </div>
+
+              {/* Payment Type Selection */}
+              <div style={{ 
+                padding: '16px', 
+                background: '#e0e7ff', 
+                border: '1px solid #a5b4fc', 
+                borderRadius: '6px',
+                marginBottom: '16px'
+              }}>
+                <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: '#3730a3' }}>
+                  💳 Payment Options
+                </h3>
+                
+                <div style={{ marginBottom: '12px' }}>
+                  <label style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '8px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    color: '#4c1d95',
+                    marginBottom: '8px'
+                  }}>
+                    <input
+                      type="radio"
+                      name="paymentType"
+                      value="native"
+                      checked={paymentType === 'native'}
+                      onChange={(e) => setPaymentType(e.target.value as 'native' | 'token')}
+                      style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                    />
+                    <div>
+                      <strong>Native Token (PUSH)</strong>
+                      <div style={{ fontSize: '11px', marginTop: '2px', opacity: 0.8 }}>
+                        Pay with native Push Chain token
+                      </div>
+                    </div>
+                  </label>
+                  
+                  <label style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '8px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    color: '#4c1d95'
+                  }}>
+                    <input
+                      type="radio"
+                      name="paymentType"
+                      value="token"
+                      checked={paymentType === 'token'}
+                      onChange={(e) => setPaymentType(e.target.value as 'native' | 'token')}
+                      style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                    />
+                    <div>
+                      <strong>ERC20 Token</strong>
+                      <div style={{ fontSize: '11px', marginTop: '2px', opacity: 0.8 }}>
+                        Pay with any supported ERC20 token
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
+                {paymentType === 'token' && (
+                  <div style={{ marginTop: '12px' }}>
+                    <label style={{ 
+                      display: 'block',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      marginBottom: '6px',
+                      color: '#4c1d95'
+                    }}>
+                      Select Token
+                    </label>
+                    <select
+                      value={selectedToken}
+                      onChange={(e) => setSelectedToken(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '8px',
+                        border: '1px solid #a5b4fc',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        fontFamily: 'Monaco, Menlo, monospace',
+                        background: '#fff',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <option value="">-- Select a token --</option>
+                      {supportedTokens.map((token) => (
+                        <option key={token.symbol} value={token.address}>
+                          {token.name} ({token.symbol}) - {token.chain}
+                        </option>
+                      ))}
+                    </select>
+                    <div style={{ fontSize: '11px', marginTop: '4px', color: '#6366f1', opacity: 0.8 }}>
+                      Push Chain supports payments with tokens from multiple chains via Universal Signer
+                      <br />
+                      <a 
+                        href="https://push.org/docs/chain/setup/chain-config/" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        style={{ color: '#6366f1', textDecoration: 'underline' }}
+                      >
+                        View Chain Configuration Docs →
+                      </a>
+                    </div>
+                    {selectedToken && (() => {
+                      const selectedTokenInfo = supportedTokens.find(t => t.address === selectedToken);
+                      const isValidAddress = selectedToken && selectedToken !== '0x0000000000000000000000000000000000000000';
+                      
+                      return (
+                        <div style={{ marginTop: '12px' }}>
+                          {isValidAddress ? (
+                            <div style={{ 
+                              padding: '8px', 
+                              background: '#e0e7ff', 
+                              borderRadius: '4px',
+                              fontSize: '11px',
+                              fontFamily: 'Monaco, Menlo, monospace',
+                              wordBreak: 'break-all',
+                              color: '#4c1d95'
+                            }}>
+                              <strong>Token Address:</strong> {selectedToken}
+                            </div>
+                          ) : (
+                            <div style={{ 
+                              padding: '8px', 
+                              background: '#fef3c7', 
+                              borderRadius: '4px',
+                              fontSize: '11px',
+                              color: '#92400e'
+                            }}>
+                              ⚠️ <strong>Token address needs to be configured.</strong>
+                              <br />
+                              This token is supported via Universal Signer for cross-chain payments.
+                              For ERC20 token payments on Push Chain, find the wrapped token address on{' '}
+                              <a 
+                                href="https://donut.push.network" 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                style={{ color: '#92400e', textDecoration: 'underline' }}
+                              >
+                                Push Chain Explorer
+                              </a>
+                              {' '}and update the SDK token registry.
+                            </div>
+                          )}
+                          {selectedTokenInfo && (
+                            <>
+                              {selectedTokenInfo.gatewayAddress && (
+                                <div style={{ 
+                                  marginTop: '8px',
+                                  padding: '8px', 
+                                  background: '#dbeafe', 
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontFamily: 'Monaco, Menlo, monospace',
+                                  wordBreak: 'break-all',
+                                  color: '#1e40af'
+                                }}>
+                                  <strong>Gateway Contract:</strong> {selectedTokenInfo.gatewayAddress}
+                                  {selectedTokenInfo.namespace && (
+                                    <>
+                                      <br />
+                                      <strong>Namespace:</strong> {selectedTokenInfo.namespace}
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+
+              {/* Chain Selection (for Universal Signer) */}
+              {useUniversalSigner && (
+                <div style={{ 
+                  padding: '16px', 
+                  background: '#dbeafe', 
+                  border: '1px solid #93c5fd', 
+                  borderRadius: '6px',
+                  marginBottom: '16px'
+                }}>
+                  <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: '#1e40af' }}>
+                    🌐 Chain Selection (Universal Signer)
+                  </h3>
+                  
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ 
+                      display: 'block',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      marginBottom: '6px',
+                      color: '#1e40af'
+                    }}>
+                      Chain ID
+                    </label>
+                    <input
+                      type="text"
+                      value={selectedChainId}
+                      onChange={(e) => setSelectedChainId(e.target.value)}
+                      placeholder="42101"
+                      style={{
+                        width: '100%',
+                        padding: '8px',
+                        border: '1px solid #93c5fd',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        fontFamily: 'Monaco, Menlo, monospace',
+                        background: '#fff'
+                      }}
+                    />
+                    <div style={{ fontSize: '11px', marginTop: '4px', color: '#3b82f6', opacity: 0.8 }}>
+                      Default: 42101 (Push Chain testnet)
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ 
+                      display: 'block',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      marginBottom: '6px',
+                      color: '#1e40af'
+                    }}>
+                      Custom RPC URL (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={customRpcUrl}
+                      onChange={(e) => setCustomRpcUrl(e.target.value)}
+                      placeholder="https://..."
+                      style={{
+                        width: '100%',
+                        padding: '8px',
+                        border: '1px solid #93c5fd',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        fontFamily: 'Monaco, Menlo, monospace',
+                        background: '#fff'
+                      }}
+                    />
+                    <div style={{ fontSize: '11px', marginTop: '4px', color: '#3b82f6', opacity: 0.8 }}>
+                      Override default RPC URL for multi-chain support
+                    </div>
+                  </div>
+                </div>
+              )}
               
               <button onClick={handleRequest} style={{ width: '100%' }}>
                 Make Request →

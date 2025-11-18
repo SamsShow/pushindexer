@@ -337,6 +337,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
 
           const recipient = paymentRequirements.payTo || paymentRequirements.recipient;
           const amount = paymentRequirements.maxAmountRequired || paymentRequirements.amount;
+          const tokenAddress = paymentRequirements.token || paymentRequirements.asset; // Support both 'token' and 'asset' fields
 
           if (!recipient || !amount) {
             throw new Error('Missing recipient or amount in payment requirements');
@@ -344,6 +345,9 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
 
           // Detect chain information from payment requirements
           const chainInfo = detectChainInfo(paymentRequirements, config);
+
+          // Determine if this is a token transfer or native transfer
+          const isTokenTransfer = !!tokenAddress && tokenAddress !== '0x0000000000000000000000000000000000000000';
 
           // Load peer dependencies lazily when needed
           const PushChainModule = walletProvider || privateKey ? await loadPushChain() : null;
@@ -356,7 +360,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
           if (providedUniversalSigner || (PushChainModule && PushChainModule.utils && PushChainModule.utils.signer && (walletProvider || privateKey))) {
             try {
               if (onPaymentStatus) {
-                onPaymentStatus('Using Universal Signer for multi-chain transaction...');
+                onPaymentStatus(`Using Universal Signer for ${isTokenTransfer ? 'token' : 'native'} transfer...`);
               }
 
               let universalSigner = providedUniversalSigner;
@@ -394,16 +398,37 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               // Universal Signer wraps ethers signers and provides a unified interface
               // When wrapping ethers signers, we can access the underlying signer's sendTransaction
               const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
-              const amountWei = ethersModule ? ethersModule.parseEther(amount.toString()) : BigInt(Number(amount) * 1e18);
-
-              // Prepare transaction data
-              const facilitatorAbi = [
-                'function facilitateNativeTransfer(address recipient, uint256 amount) external payable',
-              ];
               
-              // Encode function call
-              const iface = ethersModule ? new ethersModule.Interface(facilitatorAbi) : null;
-              const data = iface ? iface.encodeFunctionData('facilitateNativeTransfer', [recipient, amountWei]) : '0x';
+              let facilitatorAbi: string[];
+              let data: string;
+              let txValue: bigint | string = BigInt(0);
+              
+              if (isTokenTransfer) {
+                // Token transfer - need to parse amount based on token decimals (assume 18 for now)
+                const amountWei = ethersModule ? ethersModule.parseEther(amount.toString()) : BigInt(Number(amount) * 1e18);
+                
+                facilitatorAbi = [
+                  'function facilitateTokenTransfer(address token, address recipient, uint256 amount) external',
+                ];
+                
+                const iface = ethersModule ? new ethersModule.Interface(facilitatorAbi) : null;
+                data = iface ? iface.encodeFunctionData('facilitateTokenTransfer', [tokenAddress, recipient, amountWei]) : '0x';
+                
+                if (onPaymentStatus) {
+                  onPaymentStatus(`Preparing token transfer: ${amount} tokens from ${tokenAddress}...`);
+                }
+              } else {
+                // Native transfer
+                const amountWei = ethersModule ? ethersModule.parseEther(amount.toString()) : BigInt(Number(amount) * 1e18);
+                txValue = amountWei;
+                
+                facilitatorAbi = [
+                  'function facilitateNativeTransfer(address recipient, uint256 amount) external payable',
+                ];
+                
+                const iface = ethersModule ? new ethersModule.Interface(facilitatorAbi) : null;
+                data = iface ? iface.encodeFunctionData('facilitateNativeTransfer', [recipient, amountWei]) : '0x';
+              }
 
               // Universal Signer wraps ethers signers
               // When wrapping ethers signers, Universal Signer should handle sendTransaction internally
@@ -413,11 +438,13 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               
               // Check if Universal Signer exposes sendTransaction (some implementations do)
               if (typeof universalSigner.sendTransaction === 'function') {
-                const txRequest = {
+                const txRequest: any = {
                   to: facilitatorContractAddress,
-                  value: amountWei,
                   data: data,
                 };
+                if (!isTokenTransfer) {
+                  txRequest.value = txValue;
+                }
                 txResult = await universalSigner.sendTransaction(txRequest);
               } else if (walletProvider && ethersModule) {
                 // If Universal Signer doesn't expose sendTransaction, use the original walletProvider
@@ -432,60 +459,154 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
                 const signer = await walletProvider.getSigner();
                 const contract = new ethersModule.Contract(facilitatorContractAddress, facilitatorAbi, signer);
                 
-                // Estimate gas
-                const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
-                  recipient,
-                  amountWei,
-                  { value: amountWei }
-                );
+                if (isTokenTransfer) {
+                  // Token transfer - need to approve first
+                  const amountWei = ethersModule.parseEther(amount.toString());
+                  const tokenAbi = ['function approve(address spender, uint256 amount) external returns (bool)'];
+                  const tokenContract = new ethersModule.Contract(tokenAddress, tokenAbi, signer);
+                  
+                  if (onPaymentStatus) {
+                    onPaymentStatus('Approving token spend...');
+                  }
+                  
+                  // Check current allowance
+                  const allowanceAbi = ['function allowance(address owner, address spender) external view returns (uint256)'];
+                  const allowanceContract = new ethersModule.Contract(tokenAddress, allowanceAbi, signer);
+                  const currentAllowance = await allowanceContract.allowance(await signer.getAddress(), facilitatorContractAddress);
+                  
+                  if (currentAllowance < amountWei) {
+                    const approveTx = await tokenContract.approve(facilitatorContractAddress, amountWei);
+                    await approveTx.wait();
+                    if (onPaymentStatus) {
+                      onPaymentStatus('Token approval confirmed, proceeding with transfer...');
+                    }
+                  }
+                  
+                  // Estimate gas and send token transfer
+                  const gasEstimate = await contract.facilitateTokenTransfer.estimateGas(
+                    tokenAddress,
+                    recipient,
+                    amountWei
+                  );
 
-                // Send transaction
-                const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
-                  value: amountWei,
-                  gasLimit: gasEstimate,
-                });
+                  const tx = await contract.facilitateTokenTransfer(tokenAddress, recipient, amountWei, {
+                    gasLimit: gasEstimate,
+                  });
 
-                // Wait for transaction
-                const receipt = await tx.wait();
-                let chainId: string | number = chainInfo.chainId;
-                if (walletProvider.getNetwork) {
-                  const network = await walletProvider.getNetwork();
-                  chainId = typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString();
+                  const receipt = await tx.wait();
+                  let chainId: string | number = chainInfo.chainId;
+                  if (walletProvider.getNetwork) {
+                    const network = await walletProvider.getNetwork();
+                    chainId = typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString();
+                  }
+
+                  txResult = {
+                    hash: tx.hash,
+                    chainId: chainId.toString(),
+                    blockNumber: receipt.blockNumber,
+                  };
+                } else {
+                  // Native transfer
+                  const amountWei = ethersModule.parseEther(amount.toString());
+                  
+                  const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
+                    recipient,
+                    amountWei,
+                    { value: amountWei }
+                  );
+
+                  const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
+                    value: amountWei,
+                    gasLimit: gasEstimate,
+                  });
+
+                  const receipt = await tx.wait();
+                  let chainId: string | number = chainInfo.chainId;
+                  if (walletProvider.getNetwork) {
+                    const network = await walletProvider.getNetwork();
+                    chainId = typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString();
+                  }
+
+                  txResult = {
+                    hash: tx.hash,
+                    chainId: chainId.toString(),
+                    blockNumber: receipt.blockNumber,
+                  };
                 }
-
-                txResult = {
-                  hash: tx.hash,
-                  chainId: chainId.toString(),
-                  blockNumber: receipt.blockNumber,
-                };
               } else if (privateKey && ethersModule) {
                 // Use privateKey with Universal Signer's chain detection
                 if (onPaymentStatus) {
-                  onPaymentStatus('Using private key with Universal Signer chain detection...');
+                  onPaymentStatus(`Using private key with Universal Signer for ${isTokenTransfer ? 'token' : 'native'} transfer...`);
                 }
                 const provider = new ethersModule.JsonRpcProvider(chainInfo.rpcUrl);
                 const ethersSigner = new ethersModule.Wallet(privateKey, provider);
                 const contract = new ethersModule.Contract(facilitatorContractAddress, facilitatorAbi, ethersSigner);
                 
-                const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
-                  recipient,
-                  amountWei,
-                  { value: amountWei }
-                );
+                if (isTokenTransfer) {
+                  // Token transfer - need to approve first
+                  const amountWei = ethersModule.parseEther(amount.toString());
+                  const tokenAbi = ['function approve(address spender, uint256 amount) external returns (bool)'];
+                  const tokenContract = new ethersModule.Contract(tokenAddress, tokenAbi, ethersSigner);
+                  
+                  if (onPaymentStatus) {
+                    onPaymentStatus('Approving token spend...');
+                  }
+                  
+                  // Check current allowance
+                  const allowanceAbi = ['function allowance(address owner, address spender) external view returns (uint256)'];
+                  const allowanceContract = new ethersModule.Contract(tokenAddress, allowanceAbi, ethersSigner);
+                  const currentAllowance = await allowanceContract.allowance(await ethersSigner.getAddress(), facilitatorContractAddress);
+                  
+                  if (currentAllowance < amountWei) {
+                    const approveTx = await tokenContract.approve(facilitatorContractAddress, amountWei);
+                    await approveTx.wait();
+                    if (onPaymentStatus) {
+                      onPaymentStatus('Token approval confirmed, proceeding with transfer...');
+                    }
+                  }
+                  
+                  const gasEstimate = await contract.facilitateTokenTransfer.estimateGas(
+                    tokenAddress,
+                    recipient,
+                    amountWei
+                  );
 
-                const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
-                  value: amountWei,
-                  gasLimit: gasEstimate,
-                });
+                  const tx = await contract.facilitateTokenTransfer(tokenAddress, recipient, amountWei, {
+                    gasLimit: gasEstimate,
+                  });
 
-                const receipt = await tx.wait();
-                const network = await provider.getNetwork();
+                  const receipt = await tx.wait();
+                  const network = await provider.getNetwork();
 
-                txResult = {
-                  hash: tx.hash,
-                  chainId: typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString(),
-                  blockNumber: receipt.blockNumber,
-                };
+                  txResult = {
+                    hash: tx.hash,
+                    chainId: typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString(),
+                    blockNumber: receipt.blockNumber,
+                  };
+                } else {
+                  // Native transfer
+                  const amountWei = ethersModule.parseEther(amount.toString());
+                  
+                  const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
+                    recipient,
+                    amountWei,
+                    { value: amountWei }
+                  );
+
+                  const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
+                    value: amountWei,
+                    gasLimit: gasEstimate,
+                  });
+
+                  const receipt = await tx.wait();
+                  const network = await provider.getNetwork();
+
+                  txResult = {
+                    hash: tx.hash,
+                    chainId: typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString(),
+                    blockNumber: receipt.blockNumber,
+                  };
+                }
               } else {
                 throw new Error('Cannot use Universal Signer without walletProvider or privateKey');
               }
@@ -541,14 +662,11 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
             const ethersForWallet = await loadEthers();
 
             if (onPaymentStatus) {
-              onPaymentStatus('Waiting for wallet approval...');
+              onPaymentStatus(`Waiting for wallet approval for ${isTokenTransfer ? 'token' : 'native'} transfer...`);
             }
 
             // Sign transaction with wallet provider
             const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
-            const facilitatorAbi = [
-              'function facilitateNativeTransfer(address recipient, uint256 amount) external payable',
-            ];
 
             // Get signer from wallet provider
             if (!walletProvider.getSigner) {
@@ -558,92 +676,215 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               );
             }
             const signer = await walletProvider.getSigner();
-            const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, signer);
             const amountWei = ethersForWallet.parseEther(amount.toString());
 
-            // Estimate gas
-            const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
-              recipient,
-              amountWei,
-              { value: amountWei }
-            );
+            if (isTokenTransfer) {
+              // Token transfer
+              const facilitatorAbi = [
+                'function facilitateTokenTransfer(address token, address recipient, uint256 amount) external',
+              ];
+              const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, signer);
+              
+              // Approve token spend first
+              const tokenAbi = ['function approve(address spender, uint256 amount) external returns (bool)'];
+              const tokenContract = new ethersForWallet.Contract(tokenAddress, tokenAbi, signer);
+              
+              if (onPaymentStatus) {
+                onPaymentStatus('Approving token spend...');
+              }
+              
+              // Check current allowance
+              const allowanceAbi = ['function allowance(address owner, address spender) external view returns (uint256)'];
+              const allowanceContract = new ethersForWallet.Contract(tokenAddress, allowanceAbi, signer);
+              const currentAllowance = await allowanceContract.allowance(await signer.getAddress(), facilitatorContractAddress);
+              
+              if (currentAllowance < amountWei) {
+                const approveTx = await tokenContract.approve(facilitatorContractAddress, amountWei);
+                await approveTx.wait();
+                if (onPaymentStatus) {
+                  onPaymentStatus('Token approval confirmed, proceeding with transfer...');
+                }
+              }
 
-            // Send transaction (will prompt user for approval)
-            const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
-              value: amountWei,
-              gasLimit: gasEstimate,
-            });
+              // Estimate gas and send token transfer
+              const gasEstimate = await contract.facilitateTokenTransfer.estimateGas(
+                tokenAddress,
+                recipient,
+                amountWei
+              );
 
-            if (onPaymentStatus) {
-              onPaymentStatus('Transaction sent, waiting for confirmation...');
+              const tx = await contract.facilitateTokenTransfer(tokenAddress, recipient, amountWei, {
+                gasLimit: gasEstimate,
+              });
+
+              if (onPaymentStatus) {
+                onPaymentStatus('Transaction sent, waiting for confirmation...');
+              }
+
+              const receipt = await tx.wait();
+              let chainId: string | number = chainInfo.chainId;
+              if (walletProvider.getNetwork) {
+                const network = await walletProvider.getNetwork();
+                chainId = typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString();
+              }
+
+              paymentResult = {
+                success: true,
+                txHash: tx.hash,
+                recipient,
+                amount: amount.toString(),
+                chainId: chainId.toString(),
+                blockNumber: receipt.blockNumber,
+              };
+            } else {
+              // Native transfer
+              const facilitatorAbi = [
+                'function facilitateNativeTransfer(address recipient, uint256 amount) external payable',
+              ];
+              const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, signer);
+
+              // Estimate gas
+              const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
+                recipient,
+                amountWei,
+                { value: amountWei }
+              );
+
+              // Send transaction (will prompt user for approval)
+              const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
+                value: amountWei,
+                gasLimit: gasEstimate,
+              });
+
+              if (onPaymentStatus) {
+                onPaymentStatus('Transaction sent, waiting for confirmation...');
+              }
+
+              // Wait for transaction
+              const receipt = await tx.wait();
+              let chainId: string | number = chainInfo.chainId;
+              if (walletProvider.getNetwork) {
+                const network = await walletProvider.getNetwork();
+                chainId = typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString();
+              }
+
+              paymentResult = {
+                success: true,
+                txHash: tx.hash,
+                recipient,
+                amount: amount.toString(),
+                chainId: chainId.toString(),
+                blockNumber: receipt.blockNumber,
+              };
             }
-
-            // Wait for transaction
-            const receipt = await tx.wait();
-            let chainId: string | number = chainInfo.chainId;
-            if (walletProvider.getNetwork) {
-              const network = await walletProvider.getNetwork();
-              chainId = typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString();
-            }
-
-            paymentResult = {
-              success: true,
-              txHash: tx.hash,
-              recipient,
-              amount: amount.toString(),
-              chainId: chainId.toString(),
-              blockNumber: receipt.blockNumber,
-            };
           }
           // Option 3: Use private key directly with facilitator contract (agents/server-side)
           if (!paymentResult && privateKey) {
             const ethersForPrivateKey = await loadEthers();
 
             if (onPaymentStatus) {
-              onPaymentStatus('Processing payment with private key...');
+              onPaymentStatus(`Processing ${isTokenTransfer ? 'token' : 'native'} payment with private key...`);
             }
 
             // Call facilitator contract directly - no serverless API needed!
             const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
-            const facilitatorAbi = [
-              'function facilitateNativeTransfer(address recipient, uint256 amount) external payable',
-            ];
 
             // Create provider and wallet from private key
             const provider = new ethersForPrivateKey.JsonRpcProvider(chainInfo.rpcUrl);
             const wallet = new ethersForPrivateKey.Wallet(privateKey, provider);
-            const contract = new ethersForPrivateKey.Contract(facilitatorContractAddress, facilitatorAbi, wallet);
             const amountWei = ethersForPrivateKey.parseEther(amount.toString());
 
-            // Estimate gas
-            const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
-              recipient,
-              amountWei,
-              { value: amountWei }
-            );
+            if (isTokenTransfer) {
+              // Token transfer
+              const facilitatorAbi = [
+                'function facilitateTokenTransfer(address token, address recipient, uint256 amount) external',
+              ];
+              const contract = new ethersForPrivateKey.Contract(facilitatorContractAddress, facilitatorAbi, wallet);
+              
+              // Approve token spend first
+              const tokenAbi = ['function approve(address spender, uint256 amount) external returns (bool)'];
+              const tokenContract = new ethersForPrivateKey.Contract(tokenAddress, tokenAbi, wallet);
+              
+              if (onPaymentStatus) {
+                onPaymentStatus('Approving token spend...');
+              }
+              
+              // Check current allowance
+              const allowanceAbi = ['function allowance(address owner, address spender) external view returns (uint256)'];
+              const allowanceContract = new ethersForPrivateKey.Contract(tokenAddress, allowanceAbi, wallet);
+              const currentAllowance = await allowanceContract.allowance(await wallet.getAddress(), facilitatorContractAddress);
+              
+              if (currentAllowance < amountWei) {
+                const approveTx = await tokenContract.approve(facilitatorContractAddress, amountWei);
+                await approveTx.wait();
+                if (onPaymentStatus) {
+                  onPaymentStatus('Token approval confirmed, proceeding with transfer...');
+                }
+              }
 
-            // Send transaction
-            const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
-              value: amountWei,
-              gasLimit: gasEstimate,
-            });
+              // Estimate gas and send token transfer
+              const gasEstimate = await contract.facilitateTokenTransfer.estimateGas(
+                tokenAddress,
+                recipient,
+                amountWei
+              );
 
-            if (onPaymentStatus) {
-              onPaymentStatus('Transaction sent, waiting for confirmation...');
+              const tx = await contract.facilitateTokenTransfer(tokenAddress, recipient, amountWei, {
+                gasLimit: gasEstimate,
+              });
+
+              if (onPaymentStatus) {
+                onPaymentStatus('Transaction sent, waiting for confirmation...');
+              }
+
+              const receipt = await tx.wait();
+              const network = await provider.getNetwork();
+
+              paymentResult = {
+                success: true,
+                txHash: tx.hash,
+                recipient,
+                amount: amount.toString(),
+                chainId: network.chainId.toString(),
+                blockNumber: receipt.blockNumber,
+              };
+            } else {
+              // Native transfer
+              const facilitatorAbi = [
+                'function facilitateNativeTransfer(address recipient, uint256 amount) external payable',
+              ];
+              const contract = new ethersForPrivateKey.Contract(facilitatorContractAddress, facilitatorAbi, wallet);
+
+              // Estimate gas
+              const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
+                recipient,
+                amountWei,
+                { value: amountWei }
+              );
+
+              // Send transaction
+              const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
+                value: amountWei,
+                gasLimit: gasEstimate,
+              });
+
+              if (onPaymentStatus) {
+                onPaymentStatus('Transaction sent, waiting for confirmation...');
+              }
+
+              // Wait for transaction
+              const receipt = await tx.wait();
+              const network = await provider.getNetwork();
+
+              paymentResult = {
+                success: true,
+                txHash: tx.hash,
+                recipient,
+                amount: amount.toString(),
+                chainId: network.chainId.toString(),
+                blockNumber: receipt.blockNumber,
+              };
             }
-
-            // Wait for transaction
-            const receipt = await tx.wait();
-            const network = await provider.getNetwork();
-
-            paymentResult = {
-              success: true,
-              txHash: tx.hash,
-              recipient,
-              amount: amount.toString(),
-              chainId: network.chainId.toString(),
-              blockNumber: receipt.blockNumber,
-            };
           }
           // Option 4: Use custom payment endpoint (optional - only if explicitly provided)
           if (!paymentResult && paymentEndpoint) {
@@ -659,6 +900,11 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               chainId: chainInfo.chainId,
               rpcUrl: chainInfo.rpcUrl,
             };
+            
+            // Include token address if this is a token transfer
+            if (isTokenTransfer && tokenAddress) {
+              paymentPayload.token = tokenAddress;
+            }
 
             console.log('[x402-sdk] Making payment request to custom endpoint:', {
               method: 'POST',
@@ -727,13 +973,14 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
           const paymentProof: PaymentProof = {
             scheme: paymentRequirements.scheme || 'exact',
             amount: String(paymentRequirements.maxAmountRequired || paymentRequirements.amount || '0'),
-            currency: paymentRequirements.asset || paymentRequirements.currency || 'PUSH',
+            currency: paymentRequirements.asset || paymentRequirements.currency || (isTokenTransfer ? 'TOKEN' : 'PUSH'),
             recipient: String(recipient),
             facilitator: facilitatorAddress || paymentRequirements.facilitator || '',
             network: paymentRequirements.network || 'push',
             chainId: paymentRequirements.chainId || paymentResult.chainId || chainId,
             txHash: paymentResult.txHash,
             timestamp: Date.now(),
+            ...(isTokenTransfer && tokenAddress ? { token: tokenAddress } : {}),
           };
 
           // Retry the original request with X-PAYMENT header

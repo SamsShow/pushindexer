@@ -29,6 +29,7 @@ interface PaymentRequirements {
     maxAmountRequired?: string;
     currency?: string;
     asset?: string;
+    token?: string;
     recipient?: string;
     payTo?: string;
     facilitator?: string;
@@ -58,6 +59,7 @@ interface PaymentProof {
     chainId: string | number;
     txHash: string;
     timestamp: number;
+    token?: string;
 }
 /**
  * Configuration for creating an x402 client
@@ -370,4 +372,77 @@ declare function mergeConfig(userConfig?: X402ClientConfig): X402ClientConfig;
  */
 declare function createConfig(userConfig?: X402ClientConfig): X402ClientConfig;
 
-export { type ChainInfo, type NetworkPreset$1 as NetworkPreset, type PaymentProcessorResponse, type PaymentProof, type PaymentRequirements, type UniversalSigner, type WalletProvider, X402ClientBuilder, type X402ClientConfig, X402Error, X402ErrorCode, type X402Response, createConfig, createX402Client, getDefaultConfig, getPresetConfig, loadConfigFromEnv, mergeConfig };
+/**
+ * Push Chain Token Registry
+ *
+ * Based on Push Chain documentation: https://push.org/docs/chain/setup/chain-config/
+ *
+ * Push Chain supports cross-chain payments via Universal Signer, allowing users
+ * to pay from their native chains (Solana, Ethereum, etc.) without needing wrapped tokens.
+ *
+ * For ERC20 token payments on Push Chain itself, token contract addresses are listed here.
+ */
+/**
+ * Supported chain information for Push Chain
+ */
+interface SupportedChain {
+    name: string;
+    namespace: string;
+    chainId?: number;
+    gatewayAddress?: string;
+    rpcUrl?: string;
+}
+/**
+ * Token information for Push Chain
+ */
+interface TokenInfo {
+    name: string;
+    symbol: string;
+    address: string;
+    chain: string;
+    namespace?: string;
+    gatewayAddress?: string;
+    decimals?: number;
+}
+/**
+ * Push Chain Donut Testnet Chain Configuration
+ * Source: https://push.org/docs/chain/setup/chain-config/
+ */
+declare const PUSH_CHAIN_DONUT_TESTNET: SupportedChain;
+/**
+ * Supported chains for cross-chain payments via Universal Signer
+ * Source: https://push.org/docs/chain/setup/chain-config/
+ */
+declare const SUPPORTED_CHAINS: Record<string, SupportedChain>;
+/**
+ * Supported tokens for payments on Push Chain
+ *
+ * Note: For cross-chain payments via Universal Signer, users can pay directly
+ * from their native chains (Solana, Ethereum, etc.) without needing these addresses.
+ *
+ * These addresses are for ERC20 token payments ON Push Chain itself.
+ * Token addresses should be verified on Push Chain explorer: https://donut.push.network
+ */
+declare const SUPPORTED_TOKENS: TokenInfo[];
+/**
+ * Get token information by symbol
+ */
+declare function getTokenBySymbol(symbol: string): TokenInfo | undefined;
+/**
+ * Get token information by address
+ */
+declare function getTokenByAddress(address: string): TokenInfo | undefined;
+/**
+ * Get all supported tokens
+ */
+declare function getSupportedTokens(): TokenInfo[];
+/**
+ * Get supported chains
+ */
+declare function getSupportedChains(): Record<string, SupportedChain>;
+/**
+ * Get chain information by namespace
+ */
+declare function getChainByNamespace(namespace: string): SupportedChain | undefined;
+
+export { type ChainInfo, type NetworkPreset$1 as NetworkPreset, PUSH_CHAIN_DONUT_TESTNET, type PaymentProcessorResponse, type PaymentProof, type PaymentRequirements, SUPPORTED_CHAINS, SUPPORTED_TOKENS, type SupportedChain, type TokenInfo, type UniversalSigner, type WalletProvider, X402ClientBuilder, type X402ClientConfig, X402Error, X402ErrorCode, type X402Response, createConfig, createX402Client, getChainByNamespace, getDefaultConfig, getPresetConfig, getSupportedChains, getSupportedTokens, getTokenByAddress, getTokenBySymbol, loadConfigFromEnv, mergeConfig };

@@ -12,8 +12,9 @@ export const DEFAULT_CHAIN_ID = 42101;
 
 /**
  * Default Push Chain RPC URL
+ * Source: https://push.org/docs/chain/setup/chain-config/
  */
-export const DEFAULT_PUSH_CHAIN_RPC = 'https://evm.rpc-testnet-donut-node1.push.org/';
+export const DEFAULT_PUSH_CHAIN_RPC = 'https://evm.donut.rpc.push.org/';
 
 /**
  * Get environment variable value

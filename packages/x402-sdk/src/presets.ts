@@ -7,11 +7,12 @@ export type NetworkPreset = 'push-testnet' | 'push-mainnet';
 
 /**
  * Push Chain testnet configuration
+ * Source: https://push.org/docs/chain/setup/chain-config/
  */
 const PUSH_TESTNET_CONFIG: Partial<X402ClientConfig> = {
   facilitatorAddress: '0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7',
   chainId: 42101,
-  pushChainRpcUrl: 'https://evm.rpc-testnet-donut-node1.push.org/',
+  pushChainRpcUrl: 'https://evm.donut.rpc.push.org/',
 };
 
 /**
