@@ -1,7 +1,11 @@
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #ec4899;
+  --color-primary-hover: #db2777;
+  --color-background: #f5f1eb;
+
+  --font-family-sans: Inter, system-ui, sans-serif;
 }
 
 body {
@@ -244,4 +248,3 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
-
