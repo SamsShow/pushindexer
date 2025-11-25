@@ -274,6 +274,78 @@ function detectChainInfo(paymentRequirements, config) {
     network: "push"
   };
 }
+var PUSH_CHAIN_ID = "42101";
+var SOURCE_CHAIN_TOKEN_MAP = {
+  // Ethereum Sepolia (11155111)
+  "11155111": {
+    "native": "ETH",
+    "USDT": "USDT",
+    "USDC": "USDC",
+    "WETH": "WETH",
+    "stETH": "stETH"
+  },
+  // Base Sepolia (84532)
+  "84532": {
+    "native": "ETH",
+    "USDT": "USDT",
+    "USDC": "USDC"
+  },
+  // Arbitrum Sepolia (421614)
+  "421614": {
+    "native": "ETH",
+    "USDT": "USDT",
+    "USDC": "USDC"
+  },
+  // BNB Testnet (97)
+  "97": {
+    "native": "BNB",
+    "USDT": "USDT"
+  }
+};
+async function detectWalletChainId(walletProvider, signer, debugConfig) {
+  let walletChainId;
+  const isBrowser = typeof globalThis !== "undefined" && typeof globalThis.window !== "undefined";
+  const ethereumProvider = isBrowser ? globalThis.window?.ethereum : void 0;
+  if (ethereumProvider) {
+    try {
+      const chainId = await ethereumProvider.request({ method: "eth_chainId" });
+      if (chainId) {
+        walletChainId = parseInt(chainId, 16).toString();
+        if (debugConfig) {
+          debugLog(debugConfig, "Chain ID from ethereum.request", { walletChainId, hex: chainId });
+        }
+        return walletChainId;
+      }
+    } catch (ethError) {
+      console.warn("Could not get chainId from ethereum.request:", ethError);
+    }
+  }
+  if (!walletChainId && walletProvider?.getNetwork) {
+    try {
+      const network = await walletProvider.getNetwork();
+      walletChainId = typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString();
+      if (debugConfig) {
+        debugLog(debugConfig, "Chain ID from wallet provider", { walletChainId });
+      }
+      return walletChainId;
+    } catch (networkError) {
+      console.warn("Could not get network from wallet provider:", networkError);
+    }
+  }
+  if (!walletChainId && signer?.provider) {
+    try {
+      const network = await signer.provider.getNetwork();
+      walletChainId = typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString();
+      if (debugConfig) {
+        debugLog(debugConfig, "Chain ID from signer provider", { walletChainId });
+      }
+      return walletChainId;
+    } catch (providerError) {
+      console.warn("Could not get network from signer provider:", providerError);
+    }
+  }
+  return void 0;
+}
 async function createUniversalSignerFromEthersSigner(ethersSigner) {
   const PushChainModule = await loadPushChain();
   if (!PushChainModule || !PushChainModule.utils || !PushChainModule.utils.signer) {
@@ -336,9 +408,12 @@ async function initializePushChainClient(universalSigner, pushNetwork = "testnet
   const pushChainClient = await PushChainModule.initialize(universalSigner, initOptions);
   return pushChainClient;
 }
-async function sendUniversalTransaction(pushChainClient, txParams) {
+async function sendUniversalTransaction(pushChainClient, txParams, onPaymentStatus) {
   if (!pushChainClient || !pushChainClient.universal || !pushChainClient.universal.sendTransaction) {
     throw new Error("Invalid Push Chain Client: universal.sendTransaction not available");
+  }
+  if (onPaymentStatus) {
+    onPaymentStatus("Submitting Universal Transaction to Push Chain...");
   }
   const txResponse = await pushChainClient.universal.sendTransaction(txParams);
   return txResponse;
@@ -454,11 +529,37 @@ function createX402Client(config = {}) {
           const PushChainModule = walletProvider || privateKey ? await loadPushChain() : null;
           const ethersModule = walletProvider || privateKey ? await loadEthers() : null;
           let paymentResult;
-          const canUseUniversalTx = providedUniversalSigner || viemClient || solanaKeypair || PushChainModule && PushChainModule.utils && PushChainModule.utils.signer && (walletProvider || privateKey);
+          let walletChainId;
+          let signer;
+          if (walletProvider && ethersModule) {
+            try {
+              if (walletProvider.getSigner) {
+                signer = await walletProvider.getSigner();
+              }
+              walletChainId = await detectWalletChainId(walletProvider, signer, finalConfig);
+            } catch (e) {
+              console.warn("Could not detect wallet chain:", e);
+            }
+          }
+          const isWalletOnPushChain = walletChainId === PUSH_CHAIN_ID;
+          if (onPaymentStatus) {
+            if (walletChainId) {
+              onPaymentStatus(`Detected wallet on chain ${walletChainId}${isWalletOnPushChain ? " (Push Chain)" : " (External Chain)"}`);
+            } else {
+              onPaymentStatus("Could not detect wallet chain, will attempt payment...");
+            }
+          }
+          debugLog(finalConfig, "Wallet chain detection result", {
+            walletChainId,
+            isWalletOnPushChain,
+            pushChainId: PUSH_CHAIN_ID,
+            targetChainId: chainInfo.chainId
+          });
+          const canUseUniversalTx = !isWalletOnPushChain && (providedUniversalSigner || viemClient || solanaKeypair || PushChainModule && PushChainModule.utils && PushChainModule.utils.signer && (walletProvider || privateKey));
           if (canUseUniversalTx) {
             try {
               if (onPaymentStatus) {
-                onPaymentStatus(`Using Push Chain Universal Transaction for ${isTokenTransfer ? "token" : "native"} transfer...`);
+                onPaymentStatus(`Using Push Chain Universal Transaction for cross-chain ${isTokenTransfer ? "token" : "native"} transfer from chain ${walletChainId}...`);
               }
               let universalSigner = providedUniversalSigner;
               if (!universalSigner && viemClient) {
@@ -528,18 +629,71 @@ function createX402Client(config = {}) {
                 }
               }
               if (onPaymentStatus) {
-                onPaymentStatus("Sending Universal Transaction...");
+                onPaymentStatus(`Sending Cross-Chain Universal Transaction from chain ${walletChainId}...`);
               }
               const txParams = {
-                to: facilitatorContractAddress
+                to: recipient
+                // Send directly to recipient on Push Chain
               };
-              if (!isTokenTransfer) {
-                txParams.value = txValue;
-              }
               if (txData) {
+                txParams.to = facilitatorContractAddress;
                 txParams.data = txData;
               }
-              const txResponse = await sendUniversalTransaction(pushChainClient, txParams);
+              if (walletChainId && walletChainId !== PUSH_CHAIN_ID) {
+                if (onPaymentStatus) {
+                  onPaymentStatus(`Bridging ${isTokenTransfer ? "tokens" : "native assets"} from chain ${walletChainId} to Push Chain...`);
+                }
+                try {
+                  if (isTokenTransfer) {
+                    const tokenSymbol = paymentRequirements.tokenSymbol || "USDT";
+                    const moveableToken = pushChainClient.moveable?.token?.[tokenSymbol];
+                    if (moveableToken) {
+                      txParams.funds = {
+                        amount: amountValue,
+                        token: moveableToken
+                      };
+                      if (onPaymentStatus) {
+                        onPaymentStatus(`Using moveable token ${tokenSymbol} for cross-chain bridge...`);
+                      }
+                    } else {
+                      console.warn(`Moveable token ${tokenSymbol} not found, attempting native transfer`);
+                      txParams.value = txValue;
+                    }
+                  } else {
+                    const chainTokenMap = SOURCE_CHAIN_TOKEN_MAP[walletChainId];
+                    const nativeTokenSymbol = chainTokenMap?.native || "ETH";
+                    const moveableNativeToken = pushChainClient.moveable?.token?.[nativeTokenSymbol];
+                    if (moveableNativeToken) {
+                      txParams.funds = {
+                        amount: amountValue,
+                        token: moveableNativeToken
+                      };
+                      if (onPaymentStatus) {
+                        onPaymentStatus(`Using moveable native token ${nativeTokenSymbol} for cross-chain bridge...`);
+                      }
+                    } else {
+                      txParams.value = amountValue;
+                    }
+                  }
+                } catch (fundsError) {
+                  console.warn("Could not set up funds field, attempting direct transfer:", fundsError);
+                  if (!isTokenTransfer) {
+                    txParams.value = txValue;
+                  }
+                }
+              } else {
+                if (!isTokenTransfer) {
+                  txParams.value = txValue;
+                }
+              }
+              debugLog(finalConfig, "Universal Transaction params", {
+                to: txParams.to,
+                hasData: !!txParams.data,
+                hasFunds: !!txParams.funds,
+                hasValue: !!txParams.value,
+                sourceChain: walletChainId
+              });
+              const txResponse = await sendUniversalTransaction(pushChainClient, txParams, onPaymentStatus);
               if (onPaymentStatus) {
                 onPaymentStatus("Transaction sent, waiting for confirmation...");
               }
@@ -565,95 +719,223 @@ function createX402Client(config = {}) {
             }
           }
           if (!paymentResult && walletProvider) {
-            const ethersForWallet = await loadEthers();
-            if (onPaymentStatus) {
-              onPaymentStatus(`Waiting for wallet approval for ${isTokenTransfer ? "token" : "native"} transfer...`);
-            }
-            const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
-            if (!walletProvider.getSigner) {
-              throw new X402Error(
-                "Wallet provider does not support getSigner()",
-                "PAYMENT_METHOD_NOT_AVAILABLE" /* PAYMENT_METHOD_NOT_AVAILABLE */
-              );
-            }
-            const signer = await walletProvider.getSigner();
-            const amountWei = ethersForWallet.parseEther(amount.toString());
-            if (isTokenTransfer) {
-              const facilitatorAbi = [
-                "function facilitateTokenTransfer(address token, address recipient, uint256 amount) external"
-              ];
-              const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, signer);
-              const tokenAbi = ["function approve(address spender, uint256 amount) external returns (bool)"];
-              const tokenContract = new ethersForWallet.Contract(tokenAddress, tokenAbi, signer);
-              if (onPaymentStatus) {
-                onPaymentStatus("Approving token spend...");
-              }
-              const allowanceAbi = ["function allowance(address owner, address spender) external view returns (uint256)"];
-              const allowanceContract = new ethersForWallet.Contract(tokenAddress, allowanceAbi, signer);
-              const currentAllowance = await allowanceContract.allowance(await signer.getAddress(), facilitatorContractAddress);
-              if (currentAllowance < amountWei) {
-                const approveTx = await tokenContract.approve(facilitatorContractAddress, amountWei);
-                await approveTx.wait();
+            try {
+              const ethersForWallet = await loadEthers();
+              const currentWalletChain = walletChainId || await detectWalletChainId(walletProvider, signer, finalConfig);
+              if (currentWalletChain && currentWalletChain !== PUSH_CHAIN_ID) {
+                const errorMsg = `Your wallet is on chain ${currentWalletChain}, but payment requires Push Chain (${PUSH_CHAIN_ID}). Please either: 1) Enable "Use Universal Transaction" for cross-chain payment, or 2) Switch your wallet to Push Chain.`;
                 if (onPaymentStatus) {
-                  onPaymentStatus("Token approval confirmed, proceeding with transfer...");
+                  onPaymentStatus(`Error: ${errorMsg}`);
                 }
+                throw new X402Error(
+                  errorMsg,
+                  "NETWORK_ERROR" /* NETWORK_ERROR */,
+                  {
+                    walletChainId: currentWalletChain,
+                    expectedChainId: PUSH_CHAIN_ID,
+                    suggestion: "Enable Universal Transaction or switch to Push Chain"
+                  }
+                );
               }
-              const gasEstimate = await contract.facilitateTokenTransfer.estimateGas(
-                tokenAddress,
-                recipient,
-                amountWei
-              );
-              const tx = await contract.facilitateTokenTransfer(tokenAddress, recipient, amountWei, {
-                gasLimit: gasEstimate
-              });
               if (onPaymentStatus) {
-                onPaymentStatus("Transaction sent, waiting for confirmation...");
+                onPaymentStatus(`Processing ${isTokenTransfer ? "token" : "native"} transfer on Push Chain...`);
               }
-              const receipt = await tx.wait();
-              let chainId2 = chainInfo.chainId;
-              if (walletProvider.getNetwork) {
-                const network = await walletProvider.getNetwork();
-                chainId2 = typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString();
+              const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
+              const walletSigner = signer || (walletProvider.getSigner ? await walletProvider.getSigner() : null);
+              if (!walletSigner) {
+                throw new X402Error(
+                  "Wallet provider does not support getSigner()",
+                  "PAYMENT_METHOD_NOT_AVAILABLE" /* PAYMENT_METHOD_NOT_AVAILABLE */
+                );
               }
-              paymentResult = {
-                success: true,
-                txHash: tx.hash,
-                recipient,
-                amount: amount.toString(),
-                chainId: chainId2.toString(),
-                blockNumber: receipt.blockNumber
-              };
-            } else {
-              const facilitatorAbi = [
-                "function facilitateNativeTransfer(address recipient, uint256 amount) external payable"
-              ];
-              const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, signer);
-              const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
-                recipient,
-                amountWei,
-                { value: amountWei }
-              );
-              const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
-                value: amountWei,
-                gasLimit: gasEstimate
-              });
-              if (onPaymentStatus) {
-                onPaymentStatus("Transaction sent, waiting for confirmation...");
+              const amountWei = ethersForWallet.parseEther(amount.toString());
+              if (isTokenTransfer) {
+                const facilitatorAbi = [
+                  "function facilitateTokenTransfer(address token, address recipient, uint256 amount) external"
+                ];
+                const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, walletSigner);
+                try {
+                  const provider = walletSigner.provider || new ethersForWallet.JsonRpcProvider(chainInfo.rpcUrl);
+                  const code = await provider.getCode(tokenAddress);
+                  if (code === "0x" || code === "0x0") {
+                    throw new Error(`Token contract not found at address ${tokenAddress}. Make sure your wallet is connected to Push Chain (chainId: ${chainInfo.chainId}).`);
+                  }
+                } catch (codeError) {
+                  if (codeError.message?.includes("Token contract not found")) {
+                    throw new X402Error(
+                      codeError.message,
+                      "NETWORK_ERROR" /* NETWORK_ERROR */,
+                      { tokenAddress, chainId: chainInfo.chainId }
+                    );
+                  }
+                  console.warn("Could not verify token contract existence:", codeError.message);
+                }
+                const tokenAbi = ["function approve(address spender, uint256 amount) external returns (bool)"];
+                const tokenContract = new ethersForWallet.Contract(tokenAddress, tokenAbi, walletSigner);
+                if (onPaymentStatus) {
+                  onPaymentStatus("Checking token allowance...");
+                }
+                const allowanceAbi = ["function allowance(address owner, address spender) external view returns (uint256)"];
+                const allowanceContract = new ethersForWallet.Contract(tokenAddress, allowanceAbi, walletSigner);
+                let currentAllowance = BigInt(0);
+                try {
+                  currentAllowance = await allowanceContract.allowance(await walletSigner.getAddress(), facilitatorContractAddress);
+                } catch (allowanceError) {
+                  const errorMsg = allowanceError.message || String(allowanceError);
+                  const errorCode = allowanceError.code || allowanceError.error?.code;
+                  const isDecodeError = errorMsg.includes("could not decode") || errorMsg.includes('value="0x"') || errorMsg.includes("BAD_DATA") || errorCode === "BAD_DATA" || errorCode === "CALL_EXCEPTION" || allowanceError.info?.method === "allowance" && (errorMsg.includes("0x") || errorMsg.includes("decode")) || allowanceError.info?.signature === "allowance(address,address)" && errorCode === "BAD_DATA";
+                  if (isDecodeError) {
+                    const errorMessage = `Token contract not found or invalid. Token address ${tokenAddress} may not exist on the current chain. Make sure your wallet is connected to Push Chain (chainId: ${chainInfo.chainId}).`;
+                    if (onPaymentStatus) {
+                      onPaymentStatus(`Error: ${errorMessage}`);
+                    }
+                    throw new X402Error(
+                      errorMessage,
+                      "NETWORK_ERROR" /* NETWORK_ERROR */,
+                      {
+                        tokenAddress,
+                        chainId: chainInfo.chainId,
+                        walletChainId: currentWalletChain,
+                        originalError: errorMsg,
+                        errorCode
+                      }
+                    );
+                  }
+                  console.warn("Could not check token allowance, will attempt approval:", errorMsg);
+                  if (onPaymentStatus) {
+                    onPaymentStatus("Allowance check failed, attempting approval...");
+                  }
+                  currentAllowance = BigInt(0);
+                }
+                if (currentAllowance < amountWei) {
+                  if (onPaymentStatus) {
+                    onPaymentStatus("Approving token spend...");
+                  }
+                  try {
+                    const approveTx = await tokenContract.approve(facilitatorContractAddress, amountWei);
+                    await approveTx.wait();
+                    if (onPaymentStatus) {
+                      onPaymentStatus("Token approval confirmed, proceeding with transfer...");
+                    }
+                  } catch (approveError) {
+                    const isDecodeError = approveError.message?.includes("could not decode") || approveError.code === "BAD_DATA" || approveError.message?.includes('value="0x"');
+                    if (isDecodeError) {
+                      const errorMsg = `Token contract not found. Make sure your wallet is connected to Push Chain (chainId: ${chainInfo.chainId}). Token address ${tokenAddress} is on Push Chain.`;
+                      if (onPaymentStatus) {
+                        onPaymentStatus(`Error: ${errorMsg}`);
+                      }
+                      throw new X402Error(
+                        errorMsg,
+                        "NETWORK_ERROR" /* NETWORK_ERROR */,
+                        { tokenAddress, chainId: chainInfo.chainId, walletChainId }
+                      );
+                    }
+                    throw approveError;
+                  }
+                }
+                const gasEstimate = await contract.facilitateTokenTransfer.estimateGas(
+                  tokenAddress,
+                  recipient,
+                  amountWei
+                );
+                const tx = await contract.facilitateTokenTransfer(tokenAddress, recipient, amountWei, {
+                  gasLimit: gasEstimate
+                });
+                if (onPaymentStatus) {
+                  onPaymentStatus("Transaction sent, waiting for confirmation...");
+                }
+                const receipt = await tx.wait();
+                let chainId2 = chainInfo.chainId;
+                try {
+                  if (walletProvider.getNetwork) {
+                    const network = await walletProvider.getNetwork();
+                    chainId2 = typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString();
+                  }
+                } catch (networkError) {
+                  console.warn("Could not get network after tx confirmation (using default):", networkError.message);
+                }
+                paymentResult = {
+                  success: true,
+                  txHash: tx.hash,
+                  recipient,
+                  amount: amount.toString(),
+                  chainId: chainId2.toString(),
+                  blockNumber: receipt.blockNumber
+                };
+              } else {
+                const facilitatorAbi = [
+                  "function facilitateNativeTransfer(address recipient, uint256 amount) external payable"
+                ];
+                const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, walletSigner);
+                const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
+                  recipient,
+                  amountWei,
+                  { value: amountWei }
+                );
+                const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
+                  value: amountWei,
+                  gasLimit: gasEstimate
+                });
+                if (onPaymentStatus) {
+                  onPaymentStatus("Transaction sent, waiting for confirmation...");
+                }
+                const receipt = await tx.wait();
+                let chainId2 = chainInfo.chainId;
+                try {
+                  if (walletProvider.getNetwork) {
+                    const network = await walletProvider.getNetwork();
+                    chainId2 = typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString();
+                  }
+                } catch (networkError) {
+                  console.warn("Could not get network after tx confirmation (using default):", networkError.message);
+                }
+                paymentResult = {
+                  success: true,
+                  txHash: tx.hash,
+                  recipient,
+                  amount: amount.toString(),
+                  chainId: chainId2.toString(),
+                  blockNumber: receipt.blockNumber
+                };
               }
-              const receipt = await tx.wait();
-              let chainId2 = chainInfo.chainId;
-              if (walletProvider.getNetwork) {
-                const network = await walletProvider.getNetwork();
-                chainId2 = typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString();
+            } catch (walletError) {
+              if (walletError instanceof X402Error) {
+                throw walletError;
               }
-              paymentResult = {
-                success: true,
-                txHash: tx.hash,
-                recipient,
-                amount: amount.toString(),
-                chainId: chainId2.toString(),
-                blockNumber: receipt.blockNumber
-              };
+              const errorMsg = walletError.message || String(walletError);
+              const errorCode = walletError.code || walletError.error?.code;
+              const isNetworkChangedError = errorMsg.includes("network changed") || errorCode === "NETWORK_ERROR" && errorMsg.includes("=>");
+              if (isNetworkChangedError) {
+                const errorMessage = `Network changed during transaction. Please stay on Push Chain (${PUSH_CHAIN_ID}) while the transaction is processing. If you switched networks, please switch back and try again.`;
+                if (onPaymentStatus) {
+                  onPaymentStatus(`Error: ${errorMessage}`);
+                }
+                throw new X402Error(
+                  errorMessage,
+                  "NETWORK_ERROR" /* NETWORK_ERROR */,
+                  {
+                    originalError: errorMsg,
+                    suggestion: "Keep wallet on Push Chain during transaction"
+                  }
+                );
+              }
+              const isDecodeError = errorMsg.includes("could not decode") || errorMsg.includes('value="0x"') || errorMsg.includes("BAD_DATA") || errorCode === "BAD_DATA" || errorCode === "CALL_EXCEPTION" || walletError.info?.method === "allowance" && (errorMsg.includes("0x") || errorMsg.includes("decode")) || walletError.info?.signature === "allowance(address,address)" && errorCode === "BAD_DATA";
+              if (isDecodeError && isTokenTransfer) {
+                const errorMessage = `Token contract not found. Make sure your wallet is connected to Push Chain (chainId: ${chainInfo.chainId}). Token address ${tokenAddress} is on Push Chain.`;
+                if (onPaymentStatus) {
+                  onPaymentStatus(`Error: ${errorMessage}`);
+                }
+                throw new X402Error(
+                  errorMessage,
+                  "NETWORK_ERROR" /* NETWORK_ERROR */,
+                  {
+                    tokenAddress,
+                    chainId: chainInfo.chainId,
+                    originalError: errorMsg
+                  }
+                );
+              }
+              throw walletError;
             }
           }
           if (!paymentResult && privateKey) {
@@ -735,7 +1017,8 @@ function createX402Client(config = {}) {
               };
             }
           }
-          if (!paymentResult && paymentEndpoint) {
+          const hasWalletMethod = walletProvider || privateKey || providedUniversalSigner || viemClient || solanaKeypair;
+          if (!paymentResult && paymentEndpoint && !hasWalletMethod) {
             const baseUrlClean = baseURL?.endsWith("/") ? baseURL.slice(0, -1) : baseURL;
             const endpointUrl = baseURL ? `${baseUrlClean}/api/payment/process` : paymentEndpoint;
             const paymentPayload = {
@@ -759,7 +1042,8 @@ function createX402Client(config = {}) {
                 headers: {
                   "Content-Type": "application/json"
                 },
-                timeout: 6e4,
+                timeout: 18e4,
+                // 3 minutes - allows time for blockchain confirmation
                 withCredentials: false
               }
             );
@@ -776,14 +1060,23 @@ function createX402Client(config = {}) {
             paymentResult = paymentResponse.data;
           }
           if (!paymentResult) {
-            const errorMessage = "Payment processing failed: No payment method available. Please provide one of: walletProvider, privateKey, universalSigner, viemClient, solanaKeypair, or paymentEndpoint. The SDK uses Push Chain Universal Transactions for multi-chain support!";
-            debugLog(finalConfig, "No payment method available", {
+            let errorMessage;
+            if (walletProvider && walletChainId && walletChainId !== PUSH_CHAIN_ID) {
+              errorMessage = `Payment failed: Your wallet is on chain ${walletChainId}, not Push Chain (${PUSH_CHAIN_ID}). For cross-chain payments, please enable "Use Universal Transaction" in settings. This allows the SDK to bridge your assets to Push Chain automatically.`;
+            } else if (walletProvider) {
+              errorMessage = "Payment failed: Browser wallet payment was not completed. Please ensure your wallet is connected and on Push Chain (chainId: 42101), then try again.";
+            } else {
+              errorMessage = "Payment processing failed: No payment method available. Please provide one of: walletProvider, privateKey, universalSigner, viemClient, solanaKeypair, or paymentEndpoint. The SDK uses Push Chain Universal Transactions for multi-chain support!";
+            }
+            debugLog(finalConfig, "Payment method failed or not available", {
               hasWalletProvider: !!walletProvider,
               hasPrivateKey: !!privateKey,
               hasUniversalSigner: !!providedUniversalSigner,
               hasViemClient: !!viemClient,
               hasSolanaKeypair: !!solanaKeypair,
-              hasPaymentEndpoint: !!paymentEndpoint
+              hasPaymentEndpoint: !!paymentEndpoint,
+              walletChainId,
+              isWalletOnPushChain
             });
             throw new X402Error(errorMessage, "PAYMENT_METHOD_NOT_AVAILABLE" /* PAYMENT_METHOD_NOT_AVAILABLE */, {
               hasWalletProvider: !!walletProvider,
@@ -791,7 +1084,9 @@ function createX402Client(config = {}) {
               hasUniversalSigner: !!providedUniversalSigner,
               hasViemClient: !!viemClient,
               hasSolanaKeypair: !!solanaKeypair,
-              hasPaymentEndpoint: !!paymentEndpoint
+              hasPaymentEndpoint: !!paymentEndpoint,
+              walletChainId,
+              suggestion: walletChainId !== PUSH_CHAIN_ID ? "Enable Universal Transaction for cross-chain payments" : "Ensure wallet is connected to Push Chain"
             });
           }
           debugLog(finalConfig, "Payment processed successfully", {
@@ -831,13 +1126,21 @@ function createX402Client(config = {}) {
           });
           return axiosInstance.request(originalConfig);
         } catch (paymentError) {
+          if (paymentError instanceof X402Error) {
+            if (onPaymentStatus) {
+              onPaymentStatus(`Payment failed: ${paymentError.message}`);
+            }
+            return Promise.reject(paymentError);
+          }
           const errorMessage = paymentError.response?.data?.message || paymentError.message || "Unknown payment processing error";
           let errorCode = "PAYMENT_FAILED" /* PAYMENT_FAILED */;
           if (paymentError.message?.includes("insufficient funds") || paymentError.message?.includes("balance")) {
             errorCode = "INSUFFICIENT_FUNDS" /* INSUFFICIENT_FUNDS */;
           } else if (paymentError.message?.includes("transaction") || paymentError.message?.includes("revert")) {
             errorCode = "TRANSACTION_FAILED" /* TRANSACTION_FAILED */;
-          } else if (paymentError.code === "ECONNREFUSED" || paymentError.code === "ETIMEDOUT") {
+          } else if (paymentError.code === "ECONNREFUSED" || paymentError.code === "ETIMEDOUT" || paymentError.code === "BAD_DATA" || paymentError.code === "CALL_EXCEPTION") {
+            errorCode = "NETWORK_ERROR" /* NETWORK_ERROR */;
+          } else if (paymentError.message?.includes("could not decode") || paymentError.message?.includes("Token contract not found")) {
             errorCode = "NETWORK_ERROR" /* NETWORK_ERROR */;
           }
           debugLog(finalConfig, "Payment processing error", {
@@ -847,7 +1150,8 @@ function createX402Client(config = {}) {
             statusText: paymentError.response?.statusText,
             method: paymentError.config?.method,
             url: paymentError.config?.url,
-            responseData: paymentError.response?.data
+            responseData: paymentError.response?.data,
+            originalError: paymentError
           });
           if (onPaymentStatus) {
             onPaymentStatus(`Payment failed: ${errorMessage}`);

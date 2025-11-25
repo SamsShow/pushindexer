@@ -243,6 +243,109 @@ function detectChainInfo(
 }
 
 /**
+ * Push Chain Donut Testnet chain ID
+ */
+const PUSH_CHAIN_ID = '42101';
+
+/**
+ * Mapping of source chain IDs to their moveable token accessors
+ * Used for cross-chain fund transfers via Universal Transaction
+ */
+const SOURCE_CHAIN_TOKEN_MAP: Record<string, Record<string, string>> = {
+  // Ethereum Sepolia (11155111)
+  '11155111': {
+    'native': 'ETH',
+    'USDT': 'USDT',
+    'USDC': 'USDC',
+    'WETH': 'WETH',
+    'stETH': 'stETH',
+  },
+  // Base Sepolia (84532)
+  '84532': {
+    'native': 'ETH',
+    'USDT': 'USDT',
+    'USDC': 'USDC',
+  },
+  // Arbitrum Sepolia (421614)
+  '421614': {
+    'native': 'ETH',
+    'USDT': 'USDT',
+    'USDC': 'USDC',
+  },
+  // BNB Testnet (97)
+  '97': {
+    'native': 'BNB',
+    'USDT': 'USDT',
+  },
+};
+
+/**
+ * Detects the wallet's current chain ID
+ * Returns the chain ID as a string, or undefined if detection fails
+ */
+async function detectWalletChainId(
+  walletProvider?: any,
+  signer?: any,
+  debugConfig?: X402ClientConfig
+): Promise<string | undefined> {
+  let walletChainId: string | undefined;
+  
+  // Method 1 (HIGHEST PRIORITY): Get chainId directly from wallet via ethereum.request
+  // Check for browser environment
+  const isBrowser = typeof globalThis !== 'undefined' && typeof (globalThis as any).window !== 'undefined';
+  const ethereumProvider = isBrowser ? (globalThis as any).window?.ethereum : undefined;
+  
+  if (ethereumProvider) {
+    try {
+      const chainId = await ethereumProvider.request({ method: 'eth_chainId' });
+      if (chainId) {
+        walletChainId = parseInt(chainId, 16).toString();
+        if (debugConfig) {
+          debugLog(debugConfig, 'Chain ID from ethereum.request', { walletChainId, hex: chainId });
+        }
+        return walletChainId;
+      }
+    } catch (ethError) {
+      console.warn('Could not get chainId from ethereum.request:', ethError);
+    }
+  }
+  
+  // Method 2: Try wallet provider's getNetwork
+  if (!walletChainId && walletProvider?.getNetwork) {
+    try {
+      const network = await walletProvider.getNetwork();
+      walletChainId = typeof network.chainId === 'bigint' 
+        ? network.chainId.toString() 
+        : network.chainId.toString();
+      if (debugConfig) {
+        debugLog(debugConfig, 'Chain ID from wallet provider', { walletChainId });
+      }
+      return walletChainId;
+    } catch (networkError) {
+      console.warn('Could not get network from wallet provider:', networkError);
+    }
+  }
+  
+  // Method 3: Try signer's provider
+  if (!walletChainId && signer?.provider) {
+    try {
+      const network = await signer.provider.getNetwork();
+      walletChainId = typeof network.chainId === 'bigint' 
+        ? network.chainId.toString() 
+        : network.chainId.toString();
+      if (debugConfig) {
+        debugLog(debugConfig, 'Chain ID from signer provider', { walletChainId });
+      }
+      return walletChainId;
+    } catch (providerError) {
+      console.warn('Could not get network from signer provider:', providerError);
+    }
+  }
+  
+  return undefined;
+}
+
+/**
  * Creates a Universal Signer from ethers.js v6 signer
  * @param ethersSigner - An ethers.js Signer (Wallet or connected signer)
  * @returns Universal Signer or null if Push Chain SDK is not available
@@ -358,15 +461,21 @@ async function initializePushChainClient(
 /**
  * Sends a Universal Transaction using the Push Chain Client
  * @param pushChainClient - Initialized Push Chain Client
- * @param txParams - Transaction parameters (to, value, data)
+ * @param txParams - Transaction parameters (to, value, data, funds)
+ * @param onPaymentStatus - Optional callback for status updates
  * @returns Transaction response with hash
  */
 async function sendUniversalTransaction(
   pushChainClient: any,
-  txParams: { to: string; value?: bigint | string; data?: string }
+  txParams: { to: string; value?: bigint | string; data?: string; funds?: any },
+  onPaymentStatus?: (status: string) => void
 ): Promise<{ hash: string; [key: string]: any }> {
   if (!pushChainClient || !pushChainClient.universal || !pushChainClient.universal.sendTransaction) {
     throw new Error('Invalid Push Chain Client: universal.sendTransaction not available');
+  }
+
+  if (onPaymentStatus) {
+    onPaymentStatus('Submitting Universal Transaction to Push Chain...');
   }
 
   const txResponse = await pushChainClient.universal.sendTransaction(txParams);
@@ -538,15 +647,59 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
 
           let paymentResult: PaymentProcessorResponse | undefined;
 
-          // Option 1: Use Push Chain Universal Transaction (multi-chain support, highest priority)
-          // This follows the proper Push Chain flow: Universal Signer -> Push Chain Client -> universal.sendTransaction()
-          const canUseUniversalTx = providedUniversalSigner || viemClient || solanaKeypair || 
-            (PushChainModule && PushChainModule.utils && PushChainModule.utils.signer && (walletProvider || privateKey));
+          // ═══════════════════════════════════════════════════════════════════════════════════
+          // DETECT WALLET'S CURRENT CHAIN
+          // Universal Transaction works FROM any chain - we need to know which chain to route properly
+          // ═══════════════════════════════════════════════════════════════════════════════════
+          let walletChainId: string | undefined;
+          let signer: any;
+          
+          if (walletProvider && ethersModule) {
+            try {
+              if (walletProvider.getSigner) {
+                signer = await walletProvider.getSigner();
+              }
+              walletChainId = await detectWalletChainId(walletProvider, signer, finalConfig);
+            } catch (e) {
+              console.warn('Could not detect wallet chain:', e);
+            }
+          }
+          
+          // Check if wallet is on Push Chain
+          const isWalletOnPushChain = walletChainId === PUSH_CHAIN_ID;
+          
+              if (onPaymentStatus) {
+            if (walletChainId) {
+              onPaymentStatus(`Detected wallet on chain ${walletChainId}${isWalletOnPushChain ? ' (Push Chain)' : ' (External Chain)'}`);
+            } else {
+              onPaymentStatus('Could not detect wallet chain, will attempt payment...');
+            }
+          }
+          
+          debugLog(finalConfig, 'Wallet chain detection result', {
+            walletChainId,
+            isWalletOnPushChain,
+            pushChainId: PUSH_CHAIN_ID,
+            targetChainId: chainInfo.chainId,
+          });
+
+          // ═══════════════════════════════════════════════════════════════════════════════════
+          // PAYMENT FLOW ROUTING
+          // - If wallet is on Push Chain → Use direct contract call (no bridging needed)
+          // - If wallet is on external chain → Use Universal Transaction with funds field for bridging
+          // ═══════════════════════════════════════════════════════════════════════════════════
+
+          // Option 1: Use Push Chain Universal Transaction for CROSS-CHAIN payments (from external chains)
+          // This uses the funds field to bridge assets from the source chain to Push Chain
+          const canUseUniversalTx = !isWalletOnPushChain && (
+            providedUniversalSigner || viemClient || solanaKeypair || 
+            (PushChainModule && PushChainModule.utils && PushChainModule.utils.signer && (walletProvider || privateKey))
+          );
           
           if (canUseUniversalTx) {
             try {
               if (onPaymentStatus) {
-                onPaymentStatus(`Using Push Chain Universal Transaction for ${isTokenTransfer ? 'token' : 'native'} transfer...`);
+                onPaymentStatus(`Using Push Chain Universal Transaction for cross-chain ${isTokenTransfer ? 'token' : 'native'} transfer from chain ${walletChainId}...`);
               }
 
               let universalSigner = providedUniversalSigner;
@@ -613,13 +766,13 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               
               let txData: string | undefined;
               let txValue: bigint = BigInt(0);
-              
+                
               if (isTokenTransfer) {
                 // Token transfer - encode facilitateTokenTransfer call
                 if (ethersModule) {
                   const facilitatorAbi = [
-                    'function facilitateTokenTransfer(address token, address recipient, uint256 amount) external',
-                  ];
+                  'function facilitateTokenTransfer(address token, address recipient, uint256 amount) external',
+                ];
                   const iface = new ethersModule.Interface(facilitatorAbi);
                   txData = iface.encodeFunctionData('facilitateTokenTransfer', [tokenAddress, recipient, amountValue]);
                 }
@@ -632,31 +785,103 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
                 txValue = amountValue;
                 if (ethersModule) {
                   const facilitatorAbi = [
-                    'function facilitateNativeTransfer(address recipient, uint256 amount) external payable',
-                  ];
+                  'function facilitateNativeTransfer(address recipient, uint256 amount) external payable',
+                ];
                   const iface = new ethersModule.Interface(facilitatorAbi);
                   txData = iface.encodeFunctionData('facilitateNativeTransfer', [recipient, amountValue]);
                 }
               }
 
               // Send Universal Transaction via Push Chain Client
-              if (onPaymentStatus) {
-                onPaymentStatus('Sending Universal Transaction...');
+              // For cross-chain transfers, use the 'funds' field to bridge assets from source chain
+                if (onPaymentStatus) {
+                onPaymentStatus(`Sending Cross-Chain Universal Transaction from chain ${walletChainId}...`);
               }
 
-              const txParams: { to: string; value?: bigint; data?: string } = {
-                to: facilitatorContractAddress,
+              // Prepare transaction parameters
+              // For cross-chain: use 'funds' field to move assets from source chain to Push Chain
+              // For Push Chain: use direct 'value' field (but this path is for cross-chain only)
+              const txParams: any = {
+                to: recipient, // Send directly to recipient on Push Chain
               };
               
-              if (!isTokenTransfer) {
-                txParams.value = txValue;
-              }
-              
+              // Add the data field if we have contract interaction
               if (txData) {
+                txParams.to = facilitatorContractAddress;
                 txParams.data = txData;
               }
+              
+              // Cross-chain transfer: use funds field to bridge assets
+              // The Push Chain SDK handles the bridging automatically
+              if (walletChainId && walletChainId !== PUSH_CHAIN_ID) {
+                    if (onPaymentStatus) {
+                  onPaymentStatus(`Bridging ${isTokenTransfer ? 'tokens' : 'native assets'} from chain ${walletChainId} to Push Chain...`);
+                }
+                
+                // For cross-chain, we use the funds field
+                // The token accessor depends on what token we're transferring
+                try {
+                  if (isTokenTransfer) {
+                    // For token transfers from external chains, we need to determine which moveable token to use
+                    // Based on the source token symbol/address
+                    const tokenSymbol = paymentRequirements.tokenSymbol || 'USDT'; // Default to USDT
+                    const moveableToken = pushChainClient.moveable?.token?.[tokenSymbol];
+                    
+                    if (moveableToken) {
+                      txParams.funds = {
+                        amount: amountValue,
+                        token: moveableToken,
+                      };
+                      if (onPaymentStatus) {
+                        onPaymentStatus(`Using moveable token ${tokenSymbol} for cross-chain bridge...`);
+                      }
+                } else {
+                      // Fallback: try to use native token bridge
+                      console.warn(`Moveable token ${tokenSymbol} not found, attempting native transfer`);
+                      txParams.value = txValue;
+                    }
+                  } else {
+                    // Native token transfer (ETH, SOL, BNB, etc.)
+                    // Use funds.amount for cross-chain native transfers
+                    const chainTokenMap = SOURCE_CHAIN_TOKEN_MAP[walletChainId];
+                    const nativeTokenSymbol = chainTokenMap?.native || 'ETH';
+                    const moveableNativeToken = pushChainClient.moveable?.token?.[nativeTokenSymbol];
+                    
+                    if (moveableNativeToken) {
+                      txParams.funds = {
+                        amount: amountValue,
+                        token: moveableNativeToken,
+                      };
+                if (onPaymentStatus) {
+                        onPaymentStatus(`Using moveable native token ${nativeTokenSymbol} for cross-chain bridge...`);
+                      }
+                    } else {
+                      // Direct value transfer (will work if source chain is Push Chain)
+                      txParams.value = amountValue;
+                    }
+                  }
+                } catch (fundsError) {
+                  console.warn('Could not set up funds field, attempting direct transfer:', fundsError);
+                  if (!isTokenTransfer) {
+                    txParams.value = txValue;
+                  }
+                }
+                } else {
+                // On Push Chain - direct transfer (shouldn't reach here due to routing, but fallback)
+                if (!isTokenTransfer) {
+                  txParams.value = txValue;
+                }
+              }
 
-              const txResponse = await sendUniversalTransaction(pushChainClient, txParams);
+              debugLog(finalConfig, 'Universal Transaction params', {
+                to: txParams.to,
+                hasData: !!txParams.data,
+                hasFunds: !!txParams.funds,
+                hasValue: !!txParams.value,
+                sourceChain: walletChainId,
+              });
+
+              const txResponse = await sendUniversalTransaction(pushChainClient, txParams, onPaymentStatus);
 
               if (onPaymentStatus) {
                 onPaymentStatus('Transaction sent, waiting for confirmation...');
@@ -683,7 +908,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               };
             } catch (universalError: any) {
               console.warn('Universal Transaction failed, falling back to direct ethers.js:', universalError);
-              if (onPaymentStatus) {
+                if (onPaymentStatus) {
                 onPaymentStatus(`Universal Transaction failed: ${universalError.message}. Using fallback...`);
               }
               // Continue to ethers.js fallback below - don't throw, let it fall through
@@ -691,25 +916,56 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
             }
           }
 
-          // Option 2: Use wallet provider (browser/client-side) - fallback if Universal Signer not available
+          // Option 2: Use wallet provider (browser/client-side) - for Push Chain direct calls
+          // This is used when wallet is on Push Chain (no cross-chain bridging needed)
           if (!paymentResult && walletProvider) {
-            const ethersForWallet = await loadEthers();
+            try {
+              const ethersForWallet = await loadEthers();
 
-            if (onPaymentStatus) {
-              onPaymentStatus(`Waiting for wallet approval for ${isTokenTransfer ? 'token' : 'native'} transfer...`);
-            }
+              // Check if we should use this path
+              // We only use direct wallet calls when on Push Chain
+              // If on external chain, cross-chain tx should have been handled by Option 1
+              const currentWalletChain = walletChainId || await detectWalletChainId(walletProvider, signer, finalConfig);
+              
+              if (currentWalletChain && currentWalletChain !== PUSH_CHAIN_ID) {
+                // Wallet is on external chain - cannot use direct call
+                // Push Chain contracts don't exist on external chains
+                const errorMsg = `Your wallet is on chain ${currentWalletChain}, but payment requires Push Chain (${PUSH_CHAIN_ID}). ` +
+                  `Please either: 1) Enable "Use Universal Transaction" for cross-chain payment, or ` +
+                  `2) Switch your wallet to Push Chain.`;
+                
+                if (onPaymentStatus) {
+                  onPaymentStatus(`Error: ${errorMsg}`);
+                }
+                
+                throw new X402Error(
+                  errorMsg,
+                  X402ErrorCode.NETWORK_ERROR,
+                  { 
+                    walletChainId: currentWalletChain, 
+                    expectedChainId: PUSH_CHAIN_ID,
+                    suggestion: 'Enable Universal Transaction or switch to Push Chain'
+                  }
+                );
+              }
+
+              if (onPaymentStatus) {
+                onPaymentStatus(`Processing ${isTokenTransfer ? 'token' : 'native'} transfer on Push Chain...`);
+              }
 
             // Sign transaction with wallet provider
             const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
 
-            // Get signer from wallet provider
-            if (!walletProvider.getSigner) {
+              // Get signer from wallet provider (may already be available from earlier detection)
+              const walletSigner = signer || (walletProvider.getSigner ? await walletProvider.getSigner() : null);
+              
+              if (!walletSigner) {
               throw new X402Error(
                 'Wallet provider does not support getSigner()',
                 X402ErrorCode.PAYMENT_METHOD_NOT_AVAILABLE
               );
             }
-            const signer = await walletProvider.getSigner();
+            
             const amountWei = ethersForWallet.parseEther(amount.toString());
 
             if (isTokenTransfer) {
@@ -717,26 +973,114 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               const facilitatorAbi = [
                 'function facilitateTokenTransfer(address token, address recipient, uint256 amount) external',
               ];
-              const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, signer);
+              const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, walletSigner);
+              
+              // Verify token contract exists by checking code size
+              try {
+                const provider = walletSigner.provider || new ethersForWallet.JsonRpcProvider(chainInfo.rpcUrl);
+                const code = await provider.getCode(tokenAddress);
+                if (code === '0x' || code === '0x0') {
+                  throw new Error(`Token contract not found at address ${tokenAddress}. Make sure your wallet is connected to Push Chain (chainId: ${chainInfo.chainId}).`);
+                }
+              } catch (codeError: any) {
+                if (codeError.message?.includes('Token contract not found')) {
+                  throw new X402Error(
+                    codeError.message,
+                    X402ErrorCode.NETWORK_ERROR,
+                    { tokenAddress, chainId: chainInfo.chainId }
+                  );
+                }
+                // If we can't check code, continue anyway
+                console.warn('Could not verify token contract existence:', codeError.message);
+              }
               
               // Approve token spend first
               const tokenAbi = ['function approve(address spender, uint256 amount) external returns (bool)'];
-              const tokenContract = new ethersForWallet.Contract(tokenAddress, tokenAbi, signer);
+              const tokenContract = new ethersForWallet.Contract(tokenAddress, tokenAbi, walletSigner);
               
               if (onPaymentStatus) {
-                onPaymentStatus('Approving token spend...');
+                onPaymentStatus('Checking token allowance...');
               }
               
-              // Check current allowance
+              // Check current allowance (with error handling)
               const allowanceAbi = ['function allowance(address owner, address spender) external view returns (uint256)'];
-              const allowanceContract = new ethersForWallet.Contract(tokenAddress, allowanceAbi, signer);
-              const currentAllowance = await allowanceContract.allowance(await signer.getAddress(), facilitatorContractAddress);
+              const allowanceContract = new ethersForWallet.Contract(tokenAddress, allowanceAbi, walletSigner);
+              
+              let currentAllowance = BigInt(0);
+              try {
+                currentAllowance = await allowanceContract.allowance(await walletSigner.getAddress(), facilitatorContractAddress);
+              } catch (allowanceError: any) {
+                // If allowance check fails, it might be because:
+                // 1. Token doesn't exist on current chain (wrong chain)
+                // 2. Contract doesn't support allowance
+                // 3. Network/RPC issue
+                const errorMsg = allowanceError.message || String(allowanceError);
+                const errorCode = allowanceError.code || allowanceError.error?.code;
+                
+                // Check for decode errors - multiple ways to detect
+                const isDecodeError = 
+                  errorMsg.includes('could not decode') || 
+                  errorMsg.includes('value="0x"') ||
+                  errorMsg.includes('BAD_DATA') ||
+                  errorCode === 'BAD_DATA' ||
+                  errorCode === 'CALL_EXCEPTION' ||
+                  (allowanceError.info?.method === 'allowance' && (errorMsg.includes('0x') || errorMsg.includes('decode'))) ||
+                  (allowanceError.info?.signature === 'allowance(address,address)' && errorCode === 'BAD_DATA');
+                
+                if (isDecodeError) {
+                  const errorMessage = `Token contract not found or invalid. Token address ${tokenAddress} may not exist on the current chain. Make sure your wallet is connected to Push Chain (chainId: ${chainInfo.chainId}).`;
+                  if (onPaymentStatus) {
+                    onPaymentStatus(`Error: ${errorMessage}`);
+                  }
+                  throw new X402Error(
+                    errorMessage,
+                    X402ErrorCode.NETWORK_ERROR,
+                    { 
+                      tokenAddress, 
+                      chainId: chainInfo.chainId,
+                      walletChainId: currentWalletChain,
+                      originalError: errorMsg,
+                      errorCode
+                    }
+                  );
+                }
+                
+                console.warn('Could not check token allowance, will attempt approval:', errorMsg);
+                if (onPaymentStatus) {
+                  onPaymentStatus('Allowance check failed, attempting approval...');
+                }
+                // Set to 0 to force approval
+                currentAllowance = BigInt(0);
+              }
               
               if (currentAllowance < amountWei) {
+                if (onPaymentStatus) {
+                  onPaymentStatus('Approving token spend...');
+                }
+                try {
                 const approveTx = await tokenContract.approve(facilitatorContractAddress, amountWei);
                 await approveTx.wait();
                 if (onPaymentStatus) {
                   onPaymentStatus('Token approval confirmed, proceeding with transfer...');
+                  }
+                } catch (approveError: any) {
+                  // Check if it's a chain mismatch error
+                  const isDecodeError = approveError.message?.includes('could not decode') || 
+                                       approveError.code === 'BAD_DATA' ||
+                                       approveError.message?.includes('value="0x"');
+                  
+                  if (isDecodeError) {
+                    const errorMsg = `Token contract not found. Make sure your wallet is connected to Push Chain (chainId: ${chainInfo.chainId}). Token address ${tokenAddress} is on Push Chain.`;
+                    if (onPaymentStatus) {
+                      onPaymentStatus(`Error: ${errorMsg}`);
+                    }
+                    throw new X402Error(
+                      errorMsg,
+                      X402ErrorCode.NETWORK_ERROR,
+                      { tokenAddress, chainId: chainInfo.chainId, walletChainId }
+                    );
+                  }
+                  throw approveError;
                 }
               }
 
@@ -756,10 +1100,16 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               }
 
               const receipt = await tx.wait();
+              
+              // Get chain ID - wrap in try-catch to handle "network changed" errors
               let chainId: string | number = chainInfo.chainId;
-              if (walletProvider.getNetwork) {
-                const network = await walletProvider.getNetwork();
-                chainId = typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString();
+              try {
+                if (walletProvider.getNetwork) {
+                  const network = await walletProvider.getNetwork();
+                  chainId = typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString();
+                }
+              } catch (networkError: any) {
+                console.warn('Could not get network after tx confirmation (using default):', networkError.message);
               }
 
               paymentResult = {
@@ -775,7 +1125,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               const facilitatorAbi = [
                 'function facilitateNativeTransfer(address recipient, uint256 amount) external payable',
               ];
-              const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, signer);
+              const contract = new ethersForWallet.Contract(facilitatorContractAddress, facilitatorAbi, walletSigner);
 
               // Estimate gas
               const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
@@ -796,10 +1146,18 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
 
               // Wait for transaction
               const receipt = await tx.wait();
+              
+              // Get chain ID - wrap in try-catch to handle "network changed" errors
+              // that can occur if user switches networks after tx confirmation
               let chainId: string | number = chainInfo.chainId;
-              if (walletProvider.getNetwork) {
-                const network = await walletProvider.getNetwork();
-                chainId = typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString();
+              try {
+                if (walletProvider.getNetwork) {
+                  const network = await walletProvider.getNetwork();
+                  chainId = typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString();
+                }
+              } catch (networkError: any) {
+                // Ignore network detection errors - tx already confirmed
+                console.warn('Could not get network after tx confirmation (using default):', networkError.message);
               }
 
               paymentResult = {
@@ -810,6 +1168,65 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
                 chainId: chainId.toString(),
                 blockNumber: receipt.blockNumber,
               };
+            }
+            } catch (walletError: any) {
+              // If it's already an X402Error, re-throw it
+              if (walletError instanceof X402Error) {
+                throw walletError;
+              }
+              
+              // Check for decode/chain errors
+              const errorMsg = walletError.message || String(walletError);
+              const errorCode = walletError.code || walletError.error?.code;
+              
+              // Check for "network changed" error - this can happen if user switches chains
+              // during the transaction process. Provide helpful error message.
+              const isNetworkChangedError = 
+                errorMsg.includes('network changed') ||
+                (errorCode === 'NETWORK_ERROR' && errorMsg.includes('=>'));
+              
+              if (isNetworkChangedError) {
+                const errorMessage = `Network changed during transaction. Please stay on Push Chain (${PUSH_CHAIN_ID}) while the transaction is processing. If you switched networks, please switch back and try again.`;
+                if (onPaymentStatus) {
+                  onPaymentStatus(`Error: ${errorMessage}`);
+                }
+                throw new X402Error(
+                  errorMessage,
+                  X402ErrorCode.NETWORK_ERROR,
+                  { 
+                    originalError: errorMsg,
+                    suggestion: 'Keep wallet on Push Chain during transaction'
+                  }
+                );
+              }
+              
+              const isDecodeError = 
+                errorMsg.includes('could not decode') || 
+                errorMsg.includes('value="0x"') ||
+                errorMsg.includes('BAD_DATA') ||
+                errorCode === 'BAD_DATA' ||
+                errorCode === 'CALL_EXCEPTION' ||
+                (walletError.info?.method === 'allowance' && (errorMsg.includes('0x') || errorMsg.includes('decode'))) ||
+                (walletError.info?.signature === 'allowance(address,address)' && errorCode === 'BAD_DATA');
+              
+              if (isDecodeError && isTokenTransfer) {
+                const errorMessage = `Token contract not found. Make sure your wallet is connected to Push Chain (chainId: ${chainInfo.chainId}). Token address ${tokenAddress} is on Push Chain.`;
+                if (onPaymentStatus) {
+                  onPaymentStatus(`Error: ${errorMessage}`);
+                }
+                throw new X402Error(
+                  errorMessage,
+                  X402ErrorCode.NETWORK_ERROR,
+                  { 
+                    tokenAddress, 
+                    chainId: chainInfo.chainId,
+                    originalError: errorMsg 
+                  }
+                );
+              }
+              
+              // For other errors, re-throw as-is (will be caught by outer catch)
+              throw walletError;
             }
           }
           // Option 3: Use private key directly with facilitator contract (agents/server-side)
@@ -920,9 +1337,12 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               };
             }
           }
-          // Option 4: Use custom payment endpoint (optional - only if explicitly provided)
-          if (!paymentResult && paymentEndpoint) {
-            // Only use payment endpoint if user explicitly provided one
+          // Option 4: Use custom payment endpoint (only if NO wallet/key methods are configured)
+          // This prevents falling back to server endpoint when browser wallet should be used
+          const hasWalletMethod = walletProvider || privateKey || providedUniversalSigner || viemClient || solanaKeypair;
+          
+          if (!paymentResult && paymentEndpoint && !hasWalletMethod) {
+            // Only use payment endpoint if user explicitly provided one AND no wallet methods are configured
             const baseUrlClean = baseURL?.endsWith('/') ? baseURL.slice(0, -1) : baseURL;
             const endpointUrl = baseURL 
               ? `${baseUrlClean}/api/payment/process`
@@ -978,17 +1398,35 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
 
           // Ensure paymentResult is assigned
           if (!paymentResult) {
-            const errorMessage =
-              'Payment processing failed: No payment method available. ' +
-              'Please provide one of: walletProvider, privateKey, universalSigner, viemClient, solanaKeypair, or paymentEndpoint. ' +
-              'The SDK uses Push Chain Universal Transactions for multi-chain support!';
-            debugLog(finalConfig, 'No payment method available', {
+            let errorMessage: string;
+            
+            if (walletProvider && walletChainId && walletChainId !== PUSH_CHAIN_ID) {
+              // Browser wallet on external chain - need Universal Transaction
+              errorMessage =
+                `Payment failed: Your wallet is on chain ${walletChainId}, not Push Chain (${PUSH_CHAIN_ID}). ` +
+                'For cross-chain payments, please enable "Use Universal Transaction" in settings. ' +
+                'This allows the SDK to bridge your assets to Push Chain automatically.';
+            } else if (walletProvider) {
+              // Browser wallet configured but failed for other reason
+              errorMessage =
+                'Payment failed: Browser wallet payment was not completed. ' +
+                'Please ensure your wallet is connected and on Push Chain (chainId: 42101), then try again.';
+            } else {
+              errorMessage =
+                'Payment processing failed: No payment method available. ' +
+                'Please provide one of: walletProvider, privateKey, universalSigner, viemClient, solanaKeypair, or paymentEndpoint. ' +
+                'The SDK uses Push Chain Universal Transactions for multi-chain support!';
+            }
+            
+            debugLog(finalConfig, 'Payment method failed or not available', {
               hasWalletProvider: !!walletProvider,
               hasPrivateKey: !!privateKey,
               hasUniversalSigner: !!providedUniversalSigner,
               hasViemClient: !!viemClient,
               hasSolanaKeypair: !!solanaKeypair,
               hasPaymentEndpoint: !!paymentEndpoint,
+              walletChainId,
+              isWalletOnPushChain,
             });
             throw new X402Error(errorMessage, X402ErrorCode.PAYMENT_METHOD_NOT_AVAILABLE, {
               hasWalletProvider: !!walletProvider,
@@ -997,6 +1435,10 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
               hasViemClient: !!viemClient,
               hasSolanaKeypair: !!solanaKeypair,
               hasPaymentEndpoint: !!paymentEndpoint,
+              walletChainId,
+              suggestion: walletChainId !== PUSH_CHAIN_ID 
+                ? 'Enable Universal Transaction for cross-chain payments' 
+                : 'Ensure wallet is connected to Push Chain',
             });
           }
 
@@ -1045,6 +1487,14 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
           });
           return axiosInstance.request(originalConfig);
         } catch (paymentError: any) {
+          // If it's already an X402Error, pass it through
+          if (paymentError instanceof X402Error) {
+            if (onPaymentStatus) {
+              onPaymentStatus(`Payment failed: ${paymentError.message}`);
+            }
+            return Promise.reject(paymentError);
+          }
+          
           const errorMessage = paymentError.response?.data?.message 
             || paymentError.message 
             || 'Unknown payment processing error';
@@ -1055,7 +1505,9 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
             errorCode = X402ErrorCode.INSUFFICIENT_FUNDS;
           } else if (paymentError.message?.includes('transaction') || paymentError.message?.includes('revert')) {
             errorCode = X402ErrorCode.TRANSACTION_FAILED;
-          } else if (paymentError.code === 'ECONNREFUSED' || paymentError.code === 'ETIMEDOUT') {
+          } else if (paymentError.code === 'ECONNREFUSED' || paymentError.code === 'ETIMEDOUT' || paymentError.code === 'BAD_DATA' || paymentError.code === 'CALL_EXCEPTION') {
+            errorCode = X402ErrorCode.NETWORK_ERROR;
+          } else if (paymentError.message?.includes('could not decode') || paymentError.message?.includes('Token contract not found')) {
             errorCode = X402ErrorCode.NETWORK_ERROR;
           }
           
@@ -1068,6 +1520,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
             method: paymentError.config?.method,
             url: paymentError.config?.url,
             responseData: paymentError.response?.data,
+            originalError: paymentError,
           });
           
           if (onPaymentStatus) {

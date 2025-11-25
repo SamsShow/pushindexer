@@ -24,6 +24,10 @@ interface PaymentState {
   facilitatorInfo?: any;
   paymentMethod?: 'server-side' | 'universal-transaction' | 'browser-wallet';
   configMethod?: 'standard' | 'builder' | 'preset';
+  chainMismatch?: {
+    walletChainId: string;
+    requiredChainId: string;
+  };
 }
 
 export default function Demo() {
@@ -44,6 +48,7 @@ export default function Demo() {
   const [selectedChainId, setSelectedChainId] = useState<string>('42101');
   const [customRpcUrl, setCustomRpcUrl] = useState<string>('');
   const [pushNetwork, setPushNetwork] = useState<'testnet' | 'mainnet'>('testnet');
+  const [currentWalletChain, setCurrentWalletChain] = useState<string | null>(null);
 
   // Get supported tokens from SDK
   // These are provided by the SDK based on Push Chain documentation
@@ -56,11 +61,62 @@ export default function Demo() {
   // Get token address from selection
   const tokenAddress = selectedToken || '';
 
+  // Helper to get chain name from chain ID
+  const getChainName = (chainId: string | null): string => {
+    if (!chainId) return 'Unknown';
+    const chainMap: Record<string, string> = {
+      '42101': 'Push Chain (Testnet)',
+      '11155111': 'Ethereum Sepolia',
+      '84532': 'Base Sepolia',
+      '421614': 'Arbitrum Sepolia',
+      '97': 'BNB Testnet',
+      '1': 'Ethereum Mainnet',
+      '137': 'Polygon',
+    };
+    return chainMap[chainId] || `Chain ${chainId}`;
+  };
+
+  // Check if wallet is on Push Chain
+  const isOnPushChain = currentWalletChain === '42101';
+
   // Set mounted state after hydration to avoid SSR mismatch
   useEffect(() => {
     setIsMounted(true);
     setHasEthereum(typeof window !== 'undefined' && !!(window as any).ethereum);
   }, []);
+
+  // Detect and track wallet chain
+  useEffect(() => {
+    const detectWalletChain = async () => {
+      if (!isMounted || !hasEthereum || !(window as any).ethereum) {
+        setCurrentWalletChain(null);
+        return;
+      }
+
+      try {
+        const chainId = await (window as any).ethereum.request({ method: 'eth_chainId' });
+        if (chainId) {
+          setCurrentWalletChain(parseInt(chainId, 16).toString());
+        }
+      } catch (e) {
+        console.warn('Could not detect wallet chain:', e);
+      }
+    };
+
+    detectWalletChain();
+
+    // Listen for chain changes
+    if (hasEthereum && (window as any).ethereum) {
+      const handleChainChange = (chainId: string) => {
+        setCurrentWalletChain(parseInt(chainId, 16).toString());
+      };
+      (window as any).ethereum.on('chainChanged', handleChainChange);
+      
+      return () => {
+        (window as any).ethereum.removeListener('chainChanged', handleChainChange);
+      };
+    }
+  }, [isMounted, hasEthereum]);
 
   // Check if ethers is available (browser-compatible dynamic import)
   useEffect(() => {
@@ -86,35 +142,44 @@ export default function Demo() {
           const ethers = ethersModule.default || ethersModule;
           const provider = new ethers.BrowserProvider((window as any).ethereum);
           
+          // Common config for browser wallet
+          const walletConfig: any = {
+            walletProvider: provider,
+            debug: debugMode,
+            onPaymentStatus: (status: string) => {
+              setPaymentStatus(status);
+            },
+          };
+          
+          // If Universal Transaction is enabled, add pushNetwork for cross-chain support
+          if (useUniversalTx) {
+            walletConfig.pushNetwork = pushNetwork;
+          }
+          
           if (useBuilderPattern) {
             // Use builder pattern
             configMethod = 'builder';
-            client = X402ClientBuilder
+            const builder = X402ClientBuilder
               .forTestnet()
               .withWallet(provider)
               .withStatusCallback((status: string) => setPaymentStatus(status))
-              .withDebug(debugMode)
-              .build();
+              .withDebug(debugMode);
+            
+            if (useUniversalTx) {
+              builder.withPushNetwork(pushNetwork);
+            }
+            
+            client = builder.build();
           } else if (useNetworkPreset) {
             // Use network preset
             configMethod = 'preset';
             client = createX402Client({
-              network: 'push-testnet', // New: Network preset!
-              walletProvider: provider,
-              debug: debugMode,
-              onPaymentStatus: (status: string) => {
-                setPaymentStatus(status);
-              },
+              network: 'push-testnet',
+              ...walletConfig,
             });
           } else {
-            // Standard config (still works!)
-            client = createX402Client({
-              walletProvider: provider,
-              debug: debugMode,
-              onPaymentStatus: (status: string) => {
-                setPaymentStatus(status);
-              },
-            });
+            // Standard config
+            client = createX402Client(walletConfig);
           }
           setWalletConnected(true);
         } catch (error) {
@@ -292,12 +357,42 @@ export default function Demo() {
       // Enhanced error handling with error codes
       let errorMessage = error.message || 'Unknown error occurred';
       let errorCode: X402ErrorCode | undefined;
+      let chainMismatch: { walletChainId: string; requiredChainId: string } | undefined;
       
       if (error instanceof X402Error) {
         errorCode = error.code;
         errorMessage = `${error.code}: ${error.message}`;
         if (error.details) {
           console.error('Error details:', error.details);
+          
+          // Check for chain mismatch in error details
+          if (error.details.walletChainId && error.details.expectedChainId) {
+            chainMismatch = {
+              walletChainId: String(error.details.walletChainId),
+              requiredChainId: String(error.details.expectedChainId),
+            };
+          }
+        }
+        
+        // Also check error message for chain mismatch pattern
+        const chainMismatchMatch = errorMessage.match(/Wallet is connected to chain (\d+), but payment requires chain (\d+)/);
+        if (chainMismatchMatch) {
+          chainMismatch = {
+            walletChainId: chainMismatchMatch[1],
+            requiredChainId: chainMismatchMatch[2],
+          };
+        }
+        
+        // Check for other chain mismatch patterns
+        if (!chainMismatch) {
+          const walletChainMatch = errorMessage.match(/wallet.*chain[:\s]+(\d+)/i);
+          const requiredChainMatch = errorMessage.match(/requires?.*chain[:\s]+(\d+)/i);
+          if (walletChainMatch && requiredChainMatch) {
+            chainMismatch = {
+              walletChainId: walletChainMatch[1],
+              requiredChainId: requiredChainMatch[1],
+            };
+          }
         }
       }
       
@@ -305,6 +400,7 @@ export default function Demo() {
         status: 'error',
         error: errorMessage,
         errorCode,
+        chainMismatch,
       });
       setPaymentStatus(`Error: ${errorMessage}`);
     }
@@ -313,6 +409,88 @@ export default function Demo() {
   const handleStartOver = () => {
     setPaymentState({ status: 'idle' });
     setPaymentStatus('');
+  };
+
+  const handleSwitchToPushChain = async () => {
+    if (!isMounted || !hasEthereum || !(window as any).ethereum) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      const ethereum = (window as any).ethereum;
+      
+      // Determine chain parameters based on pushNetwork state
+      let chainId: string;
+      let chainParams: any;
+      
+      if (pushNetwork === 'mainnet') {
+        // Push Chain Mainnet (update when available)
+        chainId = '0x0'; // TODO: Update with actual mainnet chain ID
+        chainParams = {
+          chainId: chainId,
+          chainName: 'Push Chain Mainnet',
+          nativeCurrency: {
+            name: 'Push Chain',
+            symbol: 'PC',
+            decimals: 18,
+          },
+          rpcUrls: ['https://evm.rpc.push.org/'], // TODO: Update with actual mainnet RPC
+          blockExplorerUrls: ['https://push.network'],
+        };
+      } else {
+        // Push Chain Donut Testnet
+        chainId = '0xa465'; // 42101 in hex
+        chainParams = {
+          chainId: chainId,
+          chainName: 'Push Chain Donut Testnet',
+          nativeCurrency: {
+            name: 'Push Chain',
+            symbol: 'PC',
+            decimals: 18,
+          },
+          rpcUrls: ['https://evm.donut.rpc.push.org/'],
+          blockExplorerUrls: ['https://donut.push.network'],
+        };
+      }
+
+      // Try to switch to the chain
+      try {
+        await ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId }],
+        });
+        setPaymentStatus('Switched to Push Chain! You can now retry the payment.');
+        // Clear error state after successful switch
+        setTimeout(() => {
+          setPaymentState({ status: 'idle' });
+          setPaymentStatus('');
+        }, 2000);
+      } catch (switchError: any) {
+        // If the chain doesn't exist in the wallet, add it
+        if (switchError.code === 4902 || switchError.code === -32603) {
+          try {
+            await ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [chainParams],
+            });
+            setPaymentStatus('Added and switched to Push Chain! You can now retry the payment.');
+            setTimeout(() => {
+              setPaymentState({ status: 'idle' });
+              setPaymentStatus('');
+            }, 2000);
+          } catch (addError: any) {
+            console.error('Error adding chain:', addError);
+            alert(`Failed to add Push Chain: ${addError.message}`);
+          }
+        } else {
+          throw switchError;
+        }
+      }
+    } catch (error: any) {
+      console.error('Error switching chain:', error);
+      alert(`Failed to switch chain: ${error.message}`);
+    }
   };
 
   const formatHeaders = (headers: Record<string, any>) => {
@@ -514,8 +692,10 @@ export default function Demo() {
                   fontSize: '14px',
                   color: '#1e40af'
                 }}>
-                  ✓ Browser wallet connected. SDK uses dynamic imports (browser-compatible).
-                  You'll approve transactions in your wallet.
+                  ✓ Browser wallet connected on <strong>{getChainName(currentWalletChain)}</strong>
+                  {currentWalletChain && !isOnPushChain && (
+                    <span style={{ color: '#047857' }}> — Cross-chain payments supported via Universal Transaction</span>
+                  )}
                 </div>
               )}
 
@@ -691,8 +871,13 @@ export default function Demo() {
                   <div>
                     <strong>Use Universal Transaction</strong>
                     <div style={{ fontSize: '12px', marginTop: '4px', opacity: 0.8 }}>
-                      Multi-chain payments via Push Chain Universal Transaction (ethers/viem/solana)
+                      Pay from ANY chain (Sepolia, Base, Arbitrum, Solana) — assets bridged automatically to Push Chain
                     </div>
+                    {currentWalletChain && !isOnPushChain && (
+                      <div style={{ fontSize: '11px', marginTop: '4px', color: '#059669' }}>
+                        ✓ Recommended: Your wallet is on {getChainName(currentWalletChain)}
+                      </div>
+                    )}
                   </div>
                 </label>
                 {useUniversalTx && (
@@ -1190,7 +1375,7 @@ export default function Demo() {
                     {paymentState.errorCode === X402ErrorCode.INSUFFICIENT_FUNDS && (
                       <>💡 <strong>Suggestion:</strong> Add funds to your wallet</>
                     )}
-                    {paymentState.errorCode === X402ErrorCode.NETWORK_ERROR && (
+                    {paymentState.errorCode === X402ErrorCode.NETWORK_ERROR && !paymentState.chainMismatch && (
                       <>💡 <strong>Suggestion:</strong> Check your internet connection</>
                     )}
                     {paymentState.errorCode === X402ErrorCode.PAYMENT_METHOD_NOT_AVAILABLE && (
@@ -1199,6 +1384,56 @@ export default function Demo() {
                     {paymentState.errorCode === X402ErrorCode.TRANSACTION_FAILED && (
                       <>💡 <strong>Suggestion:</strong> Check transaction on explorer, verify gas settings</>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {/* Chain Mismatch - Show Options */}
+              {paymentState.chainMismatch && paymentState.errorCode === X402ErrorCode.NETWORK_ERROR && (
+                <div style={{ 
+                  marginTop: '16px',
+                  padding: '16px',
+                  background: '#eff6ff',
+                  border: '1px solid #93c5fd',
+                  borderRadius: '6px'
+                }}>
+                  <div style={{ fontSize: '14px', fontWeight: '600', color: '#1e40af', marginBottom: '8px' }}>
+                    🔗 Cross-Chain Payment Options
+                  </div>
+                  <div style={{ fontSize: '13px', color: '#1e3a8a', marginBottom: '12px' }}>
+                    Your wallet is on <strong>{getChainName(paymentState.chainMismatch.walletChainId)}</strong>.
+                    You have two options:
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#3730a3', marginBottom: '12px', paddingLeft: '12px' }}>
+                    <p style={{ marginBottom: '6px' }}>
+                      <strong>Option 1:</strong> Enable &quot;Use Universal Transaction&quot; to pay from your current chain
+                      (assets will be bridged automatically via Push Chain&apos;s Universal Transaction)
+                    </p>
+                    <p>
+                      <strong>Option 2:</strong> Switch to Push Chain for direct payment:
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleSwitchToPushChain}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      background: '#3b82f6',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      transition: 'background 0.2s'
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.background = '#2563eb'}
+                    onMouseOut={(e) => e.currentTarget.style.background = '#3b82f6'}
+                  >
+                    🔄 Switch to Push Chain
+                  </button>
+                  <div style={{ fontSize: '11px', color: '#3b82f6', marginTop: '8px', opacity: 0.8 }}>
+                    This will prompt your wallet to switch to Push Chain Donut Testnet
                   </div>
                 </div>
               )}
