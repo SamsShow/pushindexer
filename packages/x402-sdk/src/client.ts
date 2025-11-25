@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
-import type { PaymentRequirements, PaymentProof, PaymentProcessorResponse, X402ClientConfig, ChainInfo } from './types';
+import type { PaymentRequirements, PaymentProof, PaymentProcessorResponse, X402ClientConfig, ChainInfo, PushNetwork, ViemWalletClient, SolanaKeypair } from './types';
 import { X402Error, X402ErrorCode } from './types';
 import { mergeConfig, DEFAULT_FACILITATOR_ADDRESS, DEFAULT_CHAIN_ID, DEFAULT_PUSH_CHAIN_RPC } from './config';
 import { getPresetConfig } from './presets';
@@ -74,6 +74,74 @@ async function loadPushChain(): Promise<any> {
   })();
 
   return pushChainPromise;
+}
+
+// Lazy loading for Viem (optional peer dependency)
+let viem: any;
+let viemPromise: Promise<any> | null = null;
+
+async function loadViem(): Promise<any> {
+  if (viem) {
+    return viem;
+  }
+  
+  if (viemPromise) {
+    return viemPromise;
+  }
+
+  viemPromise = (async () => {
+    try {
+      const viemModule = await import('viem');
+      viem = viemModule.default || viemModule;
+      return viem;
+    } catch (error) {
+      if (typeof require !== 'undefined') {
+        try {
+          viem = require('viem');
+          return viem;
+        } catch {
+          // viem not available
+        }
+      }
+      return null; // viem is optional
+    }
+  })();
+
+  return viemPromise;
+}
+
+// Lazy loading for @solana/web3.js (optional peer dependency)
+let solanaWeb3: any;
+let solanaPromise: Promise<any> | null = null;
+
+async function loadSolanaWeb3(): Promise<any> {
+  if (solanaWeb3) {
+    return solanaWeb3;
+  }
+  
+  if (solanaPromise) {
+    return solanaPromise;
+  }
+
+  solanaPromise = (async () => {
+    try {
+      const solanaModule = await import('@solana/web3.js');
+      solanaWeb3 = solanaModule.default || solanaModule;
+      return solanaWeb3;
+    } catch (error) {
+      if (typeof require !== 'undefined') {
+        try {
+          solanaWeb3 = require('@solana/web3.js');
+          return solanaWeb3;
+        } catch {
+          // solana/web3.js not available
+        }
+      }
+      return null; // solana is optional
+    }
+  })();
+
+  return solanaPromise;
 }
 
 /**
@@ -175,25 +243,134 @@ function detectChainInfo(
 }
 
 /**
- * Creates a Universal Signer from ethers signer if Push Chain SDK is available
+ * Creates a Universal Signer from ethers.js v6 signer
+ * @param ethersSigner - An ethers.js Signer (Wallet or connected signer)
+ * @returns Universal Signer or null if Push Chain SDK is not available
  */
-async function createUniversalSignerFromEthers(
-  ethersSigner: any,
-  rpcUrl: string
+async function createUniversalSignerFromEthersSigner(
+  ethersSigner: any
 ): Promise<any | null> {
   const PushChainModule = await loadPushChain();
   if (!PushChainModule || !PushChainModule.utils || !PushChainModule.utils.signer) {
+    console.warn('Push Chain SDK not available for Universal Signer creation');
     return null;
   }
 
   try {
-    // Create Universal Signer from ethers signer
     const universalSigner = await PushChainModule.utils.signer.toUniversal(ethersSigner);
     return universalSigner;
   } catch (error) {
-    console.warn('Failed to create Universal Signer, falling back to ethers.js:', error);
+    console.warn('Failed to create Universal Signer from ethers:', error);
     return null;
   }
+}
+
+/**
+ * Creates a Universal Signer from Viem wallet client
+ * @param viemClient - A Viem WalletClient
+ * @returns Universal Signer or null if Push Chain SDK is not available
+ */
+async function createUniversalSignerFromViemClient(
+  viemClient: ViemWalletClient
+): Promise<any | null> {
+  const PushChainModule = await loadPushChain();
+  if (!PushChainModule || !PushChainModule.utils || !PushChainModule.utils.signer) {
+    console.warn('Push Chain SDK not available for Universal Signer creation');
+    return null;
+  }
+
+  try {
+    // Viem clients can be converted directly using toUniversal
+    const universalSigner = await PushChainModule.utils.signer.toUniversal(viemClient);
+    return universalSigner;
+  } catch (error) {
+    console.warn('Failed to create Universal Signer from Viem:', error);
+    return null;
+  }
+}
+
+/**
+ * Creates a Universal Signer from Solana Keypair
+ * @param keypair - A Solana Keypair from @solana/web3.js
+ * @param chain - The Solana chain to use (defaults to SOLANA_DEVNET)
+ * @returns Universal Signer or null if Push Chain SDK is not available
+ */
+async function createUniversalSignerFromSolanaKeypair(
+  keypair: SolanaKeypair,
+  chain?: string
+): Promise<any | null> {
+  const PushChainModule = await loadPushChain();
+  if (!PushChainModule || !PushChainModule.utils || !PushChainModule.utils.signer) {
+    console.warn('Push Chain SDK not available for Universal Signer creation');
+    return null;
+  }
+
+  try {
+    // Solana uses toUniversalFromKeypair with chain and library options
+    const universalSigner = await PushChainModule.utils.signer.toUniversalFromKeypair(keypair, {
+      chain: chain || PushChainModule.CONSTANTS.CHAIN.SOLANA_DEVNET,
+      library: PushChainModule.CONSTANTS.LIBRARY.SOLANA_WEB3JS,
+    });
+    return universalSigner;
+  } catch (error) {
+    console.warn('Failed to create Universal Signer from Solana keypair:', error);
+    return null;
+  }
+}
+
+/**
+ * Initializes a Push Chain Client with the given Universal Signer
+ * This is required for proper Universal Transaction flow
+ * @param universalSigner - A Universal Signer created from ethers/viem/solana
+ * @param pushNetwork - The Push network to use ('testnet' or 'mainnet')
+ * @param onPaymentStatus - Optional callback for progress updates
+ * @returns Initialized Push Chain Client
+ */
+async function initializePushChainClient(
+  universalSigner: any,
+  pushNetwork: PushNetwork = 'testnet',
+  onPaymentStatus?: (status: string) => void
+): Promise<any> {
+  const PushChainModule = await loadPushChain();
+  if (!PushChainModule) {
+    throw new Error('@pushchain/core is not available. Please install it: npm install @pushchain/core');
+  }
+
+  const networkConstant = pushNetwork === 'mainnet'
+    ? PushChainModule.CONSTANTS.PUSH_NETWORK.MAINNET
+    : PushChainModule.CONSTANTS.PUSH_NETWORK.TESTNET;
+
+  const initOptions: any = {
+    network: networkConstant,
+  };
+
+  // Add progress hook if status callback is provided
+  if (onPaymentStatus) {
+    initOptions.progressHook = async (progress: { title: string; timestamp: number }) => {
+      onPaymentStatus(progress.title);
+    };
+  }
+
+  const pushChainClient = await PushChainModule.initialize(universalSigner, initOptions);
+  return pushChainClient;
+}
+
+/**
+ * Sends a Universal Transaction using the Push Chain Client
+ * @param pushChainClient - Initialized Push Chain Client
+ * @param txParams - Transaction parameters (to, value, data)
+ * @returns Transaction response with hash
+ */
+async function sendUniversalTransaction(
+  pushChainClient: any,
+  txParams: { to: string; value?: bigint | string; data?: string }
+): Promise<{ hash: string; [key: string]: any }> {
+  if (!pushChainClient || !pushChainClient.universal || !pushChainClient.universal.sendTransaction) {
+    throw new Error('Invalid Push Chain Client: universal.sendTransaction not available');
+  }
+
+  const txResponse = await pushChainClient.universal.sendTransaction(txParams);
+  return txResponse;
 }
 
 /**
@@ -238,7 +415,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
   finalConfig = mergeConfig(finalConfig);
 
   const {
-    paymentEndpoint, // No default - users must provide walletProvider, privateKey, universalSigner, or their own endpoint
+    paymentEndpoint, // No default - users must provide walletProvider, privateKey, universalSigner, viemClient, solanaKeypair, or their own endpoint
     facilitatorAddress = DEFAULT_FACILITATOR_ADDRESS,
     chainId = DEFAULT_CHAIN_ID,
     baseURL,
@@ -247,6 +424,9 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
     privateKey,
     walletProvider,
     universalSigner: providedUniversalSigner,
+    viemClient,
+    solanaKeypair,
+    pushNetwork = 'testnet',
     pushChainRpcUrl,
     chainRpcMap,
     debug = false,
@@ -256,7 +436,10 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
     hasWalletProvider: !!walletProvider,
     hasPrivateKey: !!privateKey,
     hasUniversalSigner: !!providedUniversalSigner,
+    hasViemClient: !!viemClient,
+    hasSolanaKeypair: !!solanaKeypair,
     hasPaymentEndpoint: !!paymentEndpoint,
+    pushNetwork,
     facilitatorAddress,
     chainId,
     baseURL,
@@ -355,275 +538,137 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
 
           let paymentResult: PaymentProcessorResponse | undefined;
 
-          // Option 1: Use Universal Signer (multi-chain support, highest priority)
-          // Universal Signer is a core component for Push Chain - try to use it when available
-          if (providedUniversalSigner || (PushChainModule && PushChainModule.utils && PushChainModule.utils.signer && (walletProvider || privateKey))) {
+          // Option 1: Use Push Chain Universal Transaction (multi-chain support, highest priority)
+          // This follows the proper Push Chain flow: Universal Signer -> Push Chain Client -> universal.sendTransaction()
+          const canUseUniversalTx = providedUniversalSigner || viemClient || solanaKeypair || 
+            (PushChainModule && PushChainModule.utils && PushChainModule.utils.signer && (walletProvider || privateKey));
+          
+          if (canUseUniversalTx) {
             try {
               if (onPaymentStatus) {
-                onPaymentStatus(`Using Universal Signer for ${isTokenTransfer ? 'token' : 'native'} transfer...`);
+                onPaymentStatus(`Using Push Chain Universal Transaction for ${isTokenTransfer ? 'token' : 'native'} transfer...`);
               }
 
               let universalSigner = providedUniversalSigner;
               
-              // Create Universal Signer from walletProvider if not provided
-              if (!universalSigner && walletProvider && ethersModule && PushChainModule && PushChainModule.utils && PushChainModule.utils.signer) {
+              // Priority 1: Use provided Universal Signer
+              // Priority 2: Create from Viem client
+              if (!universalSigner && viemClient) {
+                if (onPaymentStatus) {
+                  onPaymentStatus('Creating Universal Signer from Viem client...');
+                }
+                universalSigner = await createUniversalSignerFromViemClient(viemClient);
+              }
+              
+              // Priority 3: Create from Solana keypair
+              if (!universalSigner && solanaKeypair) {
+                if (onPaymentStatus) {
+                  onPaymentStatus('Creating Universal Signer from Solana keypair...');
+                }
+                universalSigner = await createUniversalSignerFromSolanaKeypair(solanaKeypair);
+              }
+              
+              // Priority 4: Create from wallet provider (ethers.js)
+              if (!universalSigner && walletProvider && ethersModule) {
                 if (onPaymentStatus) {
                   onPaymentStatus('Creating Universal Signer from wallet provider...');
                 }
-                // Get signer from wallet provider
-                // Note: Universal Signer will use the provider's RPC, so we need to ensure
-                // the wallet provider is connected to the correct chain
                 if (!walletProvider.getSigner) {
                   throw new Error('Wallet provider does not support getSigner()');
                 }
                 const chainSigner = await walletProvider.getSigner();
-                universalSigner = await PushChainModule.utils.signer.toUniversal(chainSigner);
+                universalSigner = await createUniversalSignerFromEthersSigner(chainSigner);
               }
               
-              // Create Universal Signer from privateKey if not provided
-              if (!universalSigner && privateKey && ethersModule && PushChainModule && PushChainModule.utils && PushChainModule.utils.signer) {
+              // Priority 5: Create from private key (ethers.js)
+              if (!universalSigner && privateKey && ethersModule) {
                 if (onPaymentStatus) {
                   onPaymentStatus('Creating Universal Signer from private key...');
                 }
                 const provider = new ethersModule.JsonRpcProvider(chainInfo.rpcUrl);
                 const ethersSigner = new ethersModule.Wallet(privateKey, provider);
-                universalSigner = await PushChainModule.utils.signer.toUniversal(ethersSigner);
+                universalSigner = await createUniversalSignerFromEthersSigner(ethersSigner);
               }
 
               if (!universalSigner) {
                 throw new Error('Failed to create Universal Signer');
               }
 
-              // Use Universal Signer for cross-chain support
-              // Universal Signer wraps ethers signers and provides a unified interface
-              // When wrapping ethers signers, we can access the underlying signer's sendTransaction
+              // Initialize Push Chain Client (required for proper Universal Transaction flow)
+              if (onPaymentStatus) {
+                onPaymentStatus(`Initializing Push Chain Client (${pushNetwork})...`);
+              }
+              
+              const pushChainClient = await initializePushChainClient(
+                universalSigner,
+                pushNetwork,
+                onPaymentStatus
+              );
+
+              // Prepare transaction parameters for Universal Transaction
               const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
               
-              let facilitatorAbi: string[];
-              let data: string;
-              let txValue: bigint | string = BigInt(0);
+              // Use PushChain.utils.helpers.parseUnits for proper value formatting
+              const amountValue = PushChainModule.utils.helpers.parseUnits(amount.toString(), 18);
+              
+              let txData: string | undefined;
+              let txValue: bigint = BigInt(0);
               
               if (isTokenTransfer) {
-                // Token transfer - need to parse amount based on token decimals (assume 18 for now)
-                const amountWei = ethersModule ? ethersModule.parseEther(amount.toString()) : BigInt(Number(amount) * 1e18);
-                
-                facilitatorAbi = [
-                  'function facilitateTokenTransfer(address token, address recipient, uint256 amount) external',
-                ];
-                
-                const iface = ethersModule ? new ethersModule.Interface(facilitatorAbi) : null;
-                data = iface ? iface.encodeFunctionData('facilitateTokenTransfer', [tokenAddress, recipient, amountWei]) : '0x';
+                // Token transfer - encode facilitateTokenTransfer call
+                if (ethersModule) {
+                  const facilitatorAbi = [
+                    'function facilitateTokenTransfer(address token, address recipient, uint256 amount) external',
+                  ];
+                  const iface = new ethersModule.Interface(facilitatorAbi);
+                  txData = iface.encodeFunctionData('facilitateTokenTransfer', [tokenAddress, recipient, amountValue]);
+                }
                 
                 if (onPaymentStatus) {
                   onPaymentStatus(`Preparing token transfer: ${amount} tokens from ${tokenAddress}...`);
                 }
               } else {
-                // Native transfer
-                const amountWei = ethersModule ? ethersModule.parseEther(amount.toString()) : BigInt(Number(amount) * 1e18);
-                txValue = amountWei;
-                
-                facilitatorAbi = [
-                  'function facilitateNativeTransfer(address recipient, uint256 amount) external payable',
-                ];
-                
-                const iface = ethersModule ? new ethersModule.Interface(facilitatorAbi) : null;
-                data = iface ? iface.encodeFunctionData('facilitateNativeTransfer', [recipient, amountWei]) : '0x';
+                // Native transfer - encode facilitateNativeTransfer call
+                txValue = amountValue;
+                if (ethersModule) {
+                  const facilitatorAbi = [
+                    'function facilitateNativeTransfer(address recipient, uint256 amount) external payable',
+                  ];
+                  const iface = new ethersModule.Interface(facilitatorAbi);
+                  txData = iface.encodeFunctionData('facilitateNativeTransfer', [recipient, amountValue]);
+                }
               }
 
-              // Universal Signer wraps ethers signers
-              // When wrapping ethers signers, Universal Signer should handle sendTransaction internally
-              // However, signAndSendTransaction expects Uint8Array, so we need to use the underlying signer
-              // Try to access the original ethers signer that was wrapped
-              let txResult;
+              // Send Universal Transaction via Push Chain Client
+              if (onPaymentStatus) {
+                onPaymentStatus('Sending Universal Transaction...');
+              }
+
+              const txParams: { to: string; value?: bigint; data?: string } = {
+                to: facilitatorContractAddress,
+              };
               
-              // Check if Universal Signer exposes sendTransaction (some implementations do)
-              if (typeof universalSigner.sendTransaction === 'function') {
-                const txRequest: any = {
-                  to: facilitatorContractAddress,
-                  data: data,
-                };
-                if (!isTokenTransfer) {
-                  txRequest.value = txValue;
-                }
-                txResult = await universalSigner.sendTransaction(txRequest);
-              } else if (walletProvider && ethersModule) {
-                // If Universal Signer doesn't expose sendTransaction, use the original walletProvider
-                // This maintains Universal Signer's chain detection benefits while using ethers directly
-                // Universal Signer is still used for multi-chain support and chain detection
-                if (onPaymentStatus) {
-                  onPaymentStatus('Universal Signer: Using underlying wallet provider for transaction...');
-                }
-                if (!walletProvider.getSigner) {
-                  throw new Error('Wallet provider does not support getSigner()');
-                }
-                const signer = await walletProvider.getSigner();
-                const contract = new ethersModule.Contract(facilitatorContractAddress, facilitatorAbi, signer);
-                
-                if (isTokenTransfer) {
-                  // Token transfer - need to approve first
-                  const amountWei = ethersModule.parseEther(amount.toString());
-                  const tokenAbi = ['function approve(address spender, uint256 amount) external returns (bool)'];
-                  const tokenContract = new ethersModule.Contract(tokenAddress, tokenAbi, signer);
-                  
-                  if (onPaymentStatus) {
-                    onPaymentStatus('Approving token spend...');
-                  }
-                  
-                  // Check current allowance
-                  const allowanceAbi = ['function allowance(address owner, address spender) external view returns (uint256)'];
-                  const allowanceContract = new ethersModule.Contract(tokenAddress, allowanceAbi, signer);
-                  const currentAllowance = await allowanceContract.allowance(await signer.getAddress(), facilitatorContractAddress);
-                  
-                  if (currentAllowance < amountWei) {
-                    const approveTx = await tokenContract.approve(facilitatorContractAddress, amountWei);
-                    await approveTx.wait();
-                    if (onPaymentStatus) {
-                      onPaymentStatus('Token approval confirmed, proceeding with transfer...');
-                    }
-                  }
-                  
-                  // Estimate gas and send token transfer
-                  const gasEstimate = await contract.facilitateTokenTransfer.estimateGas(
-                    tokenAddress,
-                    recipient,
-                    amountWei
-                  );
-
-                  const tx = await contract.facilitateTokenTransfer(tokenAddress, recipient, amountWei, {
-                    gasLimit: gasEstimate,
-                  });
-
-                  const receipt = await tx.wait();
-                  let chainId: string | number = chainInfo.chainId;
-                  if (walletProvider.getNetwork) {
-                    const network = await walletProvider.getNetwork();
-                    chainId = typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString();
-                  }
-
-                  txResult = {
-                    hash: tx.hash,
-                    chainId: chainId.toString(),
-                    blockNumber: receipt.blockNumber,
-                  };
-                } else {
-                  // Native transfer
-                  const amountWei = ethersModule.parseEther(amount.toString());
-                  
-                  const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
-                    recipient,
-                    amountWei,
-                    { value: amountWei }
-                  );
-
-                  const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
-                    value: amountWei,
-                    gasLimit: gasEstimate,
-                  });
-
-                  const receipt = await tx.wait();
-                  let chainId: string | number = chainInfo.chainId;
-                  if (walletProvider.getNetwork) {
-                    const network = await walletProvider.getNetwork();
-                    chainId = typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString();
-                  }
-
-                  txResult = {
-                    hash: tx.hash,
-                    chainId: chainId.toString(),
-                    blockNumber: receipt.blockNumber,
-                  };
-                }
-              } else if (privateKey && ethersModule) {
-                // Use privateKey with Universal Signer's chain detection
-                if (onPaymentStatus) {
-                  onPaymentStatus(`Using private key with Universal Signer for ${isTokenTransfer ? 'token' : 'native'} transfer...`);
-                }
-                const provider = new ethersModule.JsonRpcProvider(chainInfo.rpcUrl);
-                const ethersSigner = new ethersModule.Wallet(privateKey, provider);
-                const contract = new ethersModule.Contract(facilitatorContractAddress, facilitatorAbi, ethersSigner);
-                
-                if (isTokenTransfer) {
-                  // Token transfer - need to approve first
-                  const amountWei = ethersModule.parseEther(amount.toString());
-                  const tokenAbi = ['function approve(address spender, uint256 amount) external returns (bool)'];
-                  const tokenContract = new ethersModule.Contract(tokenAddress, tokenAbi, ethersSigner);
-                  
-                  if (onPaymentStatus) {
-                    onPaymentStatus('Approving token spend...');
-                  }
-                  
-                  // Check current allowance
-                  const allowanceAbi = ['function allowance(address owner, address spender) external view returns (uint256)'];
-                  const allowanceContract = new ethersModule.Contract(tokenAddress, allowanceAbi, ethersSigner);
-                  const currentAllowance = await allowanceContract.allowance(await ethersSigner.getAddress(), facilitatorContractAddress);
-                  
-                  if (currentAllowance < amountWei) {
-                    const approveTx = await tokenContract.approve(facilitatorContractAddress, amountWei);
-                    await approveTx.wait();
-                    if (onPaymentStatus) {
-                      onPaymentStatus('Token approval confirmed, proceeding with transfer...');
-                    }
-                  }
-                  
-                  const gasEstimate = await contract.facilitateTokenTransfer.estimateGas(
-                    tokenAddress,
-                    recipient,
-                    amountWei
-                  );
-
-                  const tx = await contract.facilitateTokenTransfer(tokenAddress, recipient, amountWei, {
-                    gasLimit: gasEstimate,
-                  });
-
-                  const receipt = await tx.wait();
-                  const network = await provider.getNetwork();
-
-                  txResult = {
-                    hash: tx.hash,
-                    chainId: typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString(),
-                    blockNumber: receipt.blockNumber,
-                  };
-                } else {
-                  // Native transfer
-                  const amountWei = ethersModule.parseEther(amount.toString());
-                  
-                  const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
-                    recipient,
-                    amountWei,
-                    { value: amountWei }
-                  );
-
-                  const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
-                    value: amountWei,
-                    gasLimit: gasEstimate,
-                  });
-
-                  const receipt = await tx.wait();
-                  const network = await provider.getNetwork();
-
-                  txResult = {
-                    hash: tx.hash,
-                    chainId: typeof network.chainId === 'bigint' ? network.chainId.toString() : network.chainId.toString(),
-                    blockNumber: receipt.blockNumber,
-                  };
-                }
-              } else {
-                throw new Error('Cannot use Universal Signer without walletProvider or privateKey');
+              if (!isTokenTransfer) {
+                txParams.value = txValue;
               }
+              
+              if (txData) {
+                txParams.data = txData;
+              }
+
+              const txResponse = await sendUniversalTransaction(pushChainClient, txParams);
 
               if (onPaymentStatus) {
                 onPaymentStatus('Transaction sent, waiting for confirmation...');
               }
 
-              // Wait for transaction confirmation
-              // Universal Signer returns transaction hash, we may need to wait for it
-              const txHash = typeof txResult === 'string' ? txResult : (txResult?.hash || txResult?.txHash || String(txResult));
+              const txHash = txResponse.hash || txResponse.txHash || String(txResponse);
 
               if (!txHash || txHash === '[object Object]') {
-                throw new Error('Invalid transaction result from Universal Signer');
+                throw new Error('Invalid transaction result from Universal Transaction');
               }
 
-              // Get network info from Universal Signer account
+              // Get chain info from Universal Signer account
               const accountChainId = universalSigner.account?.chain || chainInfo.chainId;
               const resolvedChainId = typeof accountChainId === 'string' 
                 ? accountChainId.split(':')[1] || accountChainId 
@@ -637,20 +682,9 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
                 chainId: String(resolvedChainId || chainInfo.chainId),
               };
             } catch (universalError: any) {
-              // Check if this is the known BytesLike error - indicates Universal Signer incompatibility
-              const isBytesLikeError = universalError.message?.includes('invalid BytesLike value') || 
-                                       universalError.code === 'INVALID_ARGUMENT';
-              
-              if (isBytesLikeError) {
-                console.warn('Universal Signer incompatible with current ethers.js version. Skipping Universal Signer.');
-                if (onPaymentStatus) {
-                  onPaymentStatus('Universal Signer incompatible. Using ethers.js fallback...');
-                }
-              } else {
-                console.warn('Universal Signer failed, falling back to ethers.js:', universalError);
-                if (onPaymentStatus) {
-                  onPaymentStatus(`Universal Signer failed: ${universalError.message}. Using fallback...`);
-                }
+              console.warn('Universal Transaction failed, falling back to direct ethers.js:', universalError);
+              if (onPaymentStatus) {
+                onPaymentStatus(`Universal Transaction failed: ${universalError.message}. Using fallback...`);
               }
               // Continue to ethers.js fallback below - don't throw, let it fall through
               paymentResult = undefined;
@@ -919,7 +953,7 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
                 headers: {
                   'Content-Type': 'application/json',
                 },
-                timeout: 60000,
+                timeout: 180000, // 3 minutes - allows time for blockchain confirmation
                 withCredentials: false,
               }
             );
@@ -946,18 +980,22 @@ export function createX402Client(config: X402ClientConfig = {}): AxiosInstance {
           if (!paymentResult) {
             const errorMessage =
               'Payment processing failed: No payment method available. ' +
-              'Please provide one of: walletProvider, privateKey, universalSigner, or paymentEndpoint. ' +
-              'The SDK calls the facilitator contract directly - no serverless API required!';
+              'Please provide one of: walletProvider, privateKey, universalSigner, viemClient, solanaKeypair, or paymentEndpoint. ' +
+              'The SDK uses Push Chain Universal Transactions for multi-chain support!';
             debugLog(finalConfig, 'No payment method available', {
               hasWalletProvider: !!walletProvider,
               hasPrivateKey: !!privateKey,
               hasUniversalSigner: !!providedUniversalSigner,
+              hasViemClient: !!viemClient,
+              hasSolanaKeypair: !!solanaKeypair,
               hasPaymentEndpoint: !!paymentEndpoint,
             });
             throw new X402Error(errorMessage, X402ErrorCode.PAYMENT_METHOD_NOT_AVAILABLE, {
               hasWalletProvider: !!walletProvider,
               hasPrivateKey: !!privateKey,
               hasUniversalSigner: !!providedUniversalSigner,
+              hasViemClient: !!viemClient,
+              hasSolanaKeypair: !!solanaKeypair,
               hasPaymentEndpoint: !!paymentEndpoint,
             });
           }

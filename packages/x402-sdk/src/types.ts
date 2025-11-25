@@ -11,10 +11,41 @@ export interface WalletProvider {
 }
 
 /**
+ * Viem wallet client interface
+ * Compatible with viem's WalletClient for browser and server-side use
+ */
+export interface ViemWalletClient {
+  account?: { address: string };
+  signMessage?: (args: any) => Promise<string>;
+  sendTransaction?: (args: any) => Promise<string>;
+  [key: string]: any;
+}
+
+/**
+ * Solana keypair interface
+ * Compatible with @solana/web3.js Keypair
+ */
+export interface SolanaKeypair {
+  publicKey: { toBase58: () => string };
+  secretKey: Uint8Array;
+}
+
+/**
  * Universal Signer type from @pushchain/core
  * This is a placeholder type - actual type would come from @pushchain/core if available
  */
 export type UniversalSigner = any;
+
+/**
+ * Push Chain Client type from @pushchain/core
+ * Initialized via PushChain.initialize() and provides universal.sendTransaction()
+ */
+export type PushChainClient = any;
+
+/**
+ * Push Network type for specifying testnet or mainnet
+ */
+export type PushNetwork = 'testnet' | 'mainnet';
 
 /**
  * Network preset type
@@ -158,6 +189,41 @@ export interface X402ClientConfig {
    * ```
    */
   universalSigner?: UniversalSigner;
+
+  /**
+   * Optional: Viem wallet client for browser/client-side transactions
+   * Accepts viem WalletClient for Viem-based applications
+   * 
+   * @example
+   * ```typescript
+   * import { createWalletClient, http } from 'viem';
+   * import { privateKeyToAccount } from 'viem/accounts';
+   * const account = privateKeyToAccount(privateKey);
+   * const viemClient = createWalletClient({ account, transport: http(rpcUrl) });
+   * const client = createX402Client({ viemClient });
+   * ```
+   */
+  viemClient?: ViemWalletClient;
+
+  /**
+   * Optional: Solana keypair for Solana-based transactions
+   * Accepts @solana/web3.js Keypair for Solana chain support
+   * 
+   * @example
+   * ```typescript
+   * import { Keypair } from '@solana/web3.js';
+   * const keypair = Keypair.generate();
+   * const client = createX402Client({ solanaKeypair: keypair });
+   * ```
+   */
+  solanaKeypair?: SolanaKeypair;
+
+  /**
+   * Optional: Push Network to use ('testnet' or 'mainnet')
+   * Default: 'testnet'
+   * Used when initializing Push Chain Client for Universal Transactions
+   */
+  pushNetwork?: PushNetwork;
 
   /**
    * Optional: Enable debug mode for detailed logging

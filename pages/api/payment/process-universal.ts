@@ -41,7 +41,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const { recipient, amount, token, privateKey: requestPrivateKey, chainId, rpcUrl: requestRpcUrl } = req.body;
+    const { 
+      recipient, 
+      amount, 
+      token, 
+      privateKey: requestPrivateKey, 
+      chainId, 
+      rpcUrl: requestRpcUrl,
+      pushNetwork = 'testnet' // 'testnet' or 'mainnet'
+    } = req.body;
 
     if (!recipient || !amount) {
       return res.status(400).json({ error: "recipient and amount are required" });
@@ -61,10 +69,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    // Check if Universal Signer is available
+    // Check if Push Chain SDK is available
     if (!PushChain || !PushChain.utils || !PushChain.utils.signer) {
       return res.status(500).json({ 
-        error: "Universal Signer not available",
+        error: "Push Chain SDK not available",
         message: "@pushchain/core is not installed or not available"
       });
     }
@@ -76,100 +84,78 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: "Invalid token address" });
     }
 
-    console.log(`Using Universal Signer for ${isTokenTransfer ? 'token' : 'native'} payment processing`);
+    console.log(`Using Push Chain Universal Transaction for ${isTokenTransfer ? 'token' : 'native'} payment processing`);
 
+    // Step 1: Create ethers signer
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     const ethersSigner = new ethers.Wallet(privateKey, provider);
     
-    // Create Universal Signer from ethers signer
+    // Step 2: Convert to Universal Signer
+    console.log('Converting to Universal Signer...');
     const universalSigner = await PushChain.utils.signer.toUniversal(ethersSigner);
 
-    const amountWei = ethers.parseEther(amount.toString());
-    let facilitatorAbi: string[];
-    let data: string;
-    let txValue: bigint = BigInt(0);
+    // Step 3: Initialize Push Chain Client (required for proper Universal Transaction flow)
+    console.log(`Initializing Push Chain Client (${pushNetwork})...`);
+    const networkConstant = pushNetwork === 'mainnet'
+      ? PushChain.CONSTANTS.PUSH_NETWORK.MAINNET
+      : PushChain.CONSTANTS.PUSH_NETWORK.TESTNET;
 
+    const pushChainClient = await PushChain.initialize(universalSigner, {
+      network: networkConstant,
+      progressHook: async (progress: { title: string; timestamp: number }) => {
+        console.log('TX Progress:', progress.title, '| Time:', progress.timestamp);
+      }
+    });
+
+    // Use PushChain.utils.helpers.parseUnits for proper value formatting
+    const amountValue = PushChain.utils.helpers.parseUnits(amount.toString(), 18);
+
+    // Handle token approval if needed (still use ethers for approval)
     if (isTokenTransfer) {
-      // Token transfer - need to approve first
-      facilitatorAbi = FACILITATOR_ABI_TOKEN;
-      
       const tokenContract = new ethers.Contract(token, TOKEN_ABI, ethersSigner);
-      
-      // Check current allowance
       const currentAllowance = await tokenContract.allowance(await ethersSigner.getAddress(), contractAddress);
       
-      if (currentAllowance < amountWei) {
+      if (currentAllowance < amountValue) {
         console.log('Approving token spend...');
-        const approveTx = await tokenContract.approve(contractAddress, amountWei);
+        const approveTx = await tokenContract.approve(contractAddress, amountValue);
         await approveTx.wait();
         console.log('Token approval confirmed');
       }
-      
-      const iface = new ethers.Interface(facilitatorAbi);
-      data = iface.encodeFunctionData("facilitateTokenTransfer", [token, recipient, amountWei]);
-    } else {
-      // Native transfer
-      facilitatorAbi = FACILITATOR_ABI_NATIVE;
-      txValue = amountWei;
-      const iface = new ethers.Interface(facilitatorAbi);
-      data = iface.encodeFunctionData("facilitateNativeTransfer", [recipient, amountWei]);
     }
 
-    // Send transaction using Universal Signer
-    let txResult;
-    if (universalSigner.sendTransaction) {
-      // Use sendTransaction which accepts ethers transaction objects
-      const txRequest: any = {
-        to: contractAddress,
-        data: data,
-      };
-      if (!isTokenTransfer) {
-        txRequest.value = txValue;
-      }
-      txResult = await universalSigner.sendTransaction(txRequest);
+    // Step 4: Prepare transaction data
+    let txData: string;
+    let txValue: bigint = BigInt(0);
+
+    if (isTokenTransfer) {
+      const iface = new ethers.Interface(FACILITATOR_ABI_TOKEN);
+      txData = iface.encodeFunctionData("facilitateTokenTransfer", [token, recipient, amountValue]);
     } else {
-      // Fallback to ethers.js if sendTransaction not available
-      const contract = new ethers.Contract(contractAddress, facilitatorAbi, ethersSigner);
-      
-      if (isTokenTransfer) {
-        const gasEstimate = await contract.facilitateTokenTransfer.estimateGas(
-          token,
-          recipient,
-          amountWei
-        );
-        const tx = await contract.facilitateTokenTransfer(token, recipient, amountWei, {
-          gasLimit: gasEstimate,
-        });
-        const receipt = await tx.wait();
-        txResult = {
-          hash: tx.hash,
-          blockNumber: receipt.blockNumber,
-        };
-      } else {
-        const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
-          recipient,
-          amountWei,
-          { value: amountWei }
-        );
-        const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
-          value: amountWei,
-          gasLimit: gasEstimate,
-        });
-        const receipt = await tx.wait();
-        txResult = {
-          hash: tx.hash,
-          blockNumber: receipt.blockNumber,
-        };
-      }
+      txValue = amountValue;
+      const iface = new ethers.Interface(FACILITATOR_ABI_NATIVE);
+      txData = iface.encodeFunctionData("facilitateNativeTransfer", [recipient, amountValue]);
     }
 
-    const txHash = typeof txResult === 'string' ? txResult : txResult.hash || txResult.txHash;
+    // Step 5: Send Universal Transaction via Push Chain Client
+    console.log('Sending Universal Transaction...');
+    const txParams: { to: string; value?: bigint; data: string } = {
+      to: contractAddress,
+      data: txData,
+    };
+
+    if (!isTokenTransfer) {
+      txParams.value = txValue;
+    }
+
+    const txResponse = await pushChainClient.universal.sendTransaction(txParams);
+
+    const txHash = txResponse.hash || txResponse.txHash || String(txResponse);
     const accountChainId = universalSigner.account?.chain || (await provider.getNetwork()).chainId;
     const resolvedChainId = typeof accountChainId === 'string' 
       ? accountChainId.split(':')[1] || accountChainId 
       : accountChainId;
 
-    console.log(`Universal Signer ${isTokenTransfer ? 'token' : 'native'} transaction sent:`, txHash);
+    console.log(`Universal Transaction ${isTokenTransfer ? 'token' : 'native'} sent:`, txHash);
 
     return res.status(200).json({
       success: true,
@@ -177,17 +163,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       recipient,
       amount: amount.toString(),
       chainId: String(resolvedChainId || (await provider.getNetwork()).chainId),
-      method: 'universal-signer',
+      method: 'universal-transaction',
       token: isTokenTransfer ? token : undefined,
-      blockNumber: typeof txResult === 'object' && txResult.blockNumber ? txResult.blockNumber : undefined,
     });
   } catch (error: any) {
-    console.error("Error processing payment with Universal Signer:", error);
+    console.error("Error processing Universal Transaction:", error);
     return res.status(500).json({
       error: "Transaction failed",
       message: error.message || "Unknown error",
-      method: 'universal-signer',
+      method: 'universal-transaction',
     });
   }
 }
-

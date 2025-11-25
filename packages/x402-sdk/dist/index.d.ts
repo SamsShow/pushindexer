@@ -12,10 +12,41 @@ interface WalletProvider {
     [key: string]: any;
 }
 /**
+ * Viem wallet client interface
+ * Compatible with viem's WalletClient for browser and server-side use
+ */
+interface ViemWalletClient {
+    account?: {
+        address: string;
+    };
+    signMessage?: (args: any) => Promise<string>;
+    sendTransaction?: (args: any) => Promise<string>;
+    [key: string]: any;
+}
+/**
+ * Solana keypair interface
+ * Compatible with @solana/web3.js Keypair
+ */
+interface SolanaKeypair {
+    publicKey: {
+        toBase58: () => string;
+    };
+    secretKey: Uint8Array;
+}
+/**
  * Universal Signer type from @pushchain/core
  * This is a placeholder type - actual type would come from @pushchain/core if available
  */
 type UniversalSigner = any;
+/**
+ * Push Chain Client type from @pushchain/core
+ * Initialized via PushChain.initialize() and provides universal.sendTransaction()
+ */
+type PushChainClient = any;
+/**
+ * Push Network type for specifying testnet or mainnet
+ */
+type PushNetwork = 'testnet' | 'mainnet';
 /**
  * Network preset type
  */
@@ -145,6 +176,38 @@ interface X402ClientConfig {
      * ```
      */
     universalSigner?: UniversalSigner;
+    /**
+     * Optional: Viem wallet client for browser/client-side transactions
+     * Accepts viem WalletClient for Viem-based applications
+     *
+     * @example
+     * ```typescript
+     * import { createWalletClient, http } from 'viem';
+     * import { privateKeyToAccount } from 'viem/accounts';
+     * const account = privateKeyToAccount(privateKey);
+     * const viemClient = createWalletClient({ account, transport: http(rpcUrl) });
+     * const client = createX402Client({ viemClient });
+     * ```
+     */
+    viemClient?: ViemWalletClient;
+    /**
+     * Optional: Solana keypair for Solana-based transactions
+     * Accepts @solana/web3.js Keypair for Solana chain support
+     *
+     * @example
+     * ```typescript
+     * import { Keypair } from '@solana/web3.js';
+     * const keypair = Keypair.generate();
+     * const client = createX402Client({ solanaKeypair: keypair });
+     * ```
+     */
+    solanaKeypair?: SolanaKeypair;
+    /**
+     * Optional: Push Network to use ('testnet' or 'mainnet')
+     * Default: 'testnet'
+     * Used when initializing Push Chain Client for Universal Transactions
+     */
+    pushNetwork?: PushNetwork;
     /**
      * Optional: Enable debug mode for detailed logging
      * When enabled, logs all payment flow steps, timing information, and transaction details
@@ -310,6 +373,18 @@ declare class X402ClientBuilder {
      */
     withUniversalSigner(universalSigner: any): X402ClientBuilder;
     /**
+     * Set Viem wallet client for Viem-based applications
+     */
+    withViemClient(viemClient: any): X402ClientBuilder;
+    /**
+     * Set Solana keypair for Solana-based transactions
+     */
+    withSolanaKeypair(keypair: any): X402ClientBuilder;
+    /**
+     * Set Push Network ('testnet' or 'mainnet')
+     */
+    withPushNetwork(network: 'testnet' | 'mainnet'): X402ClientBuilder;
+    /**
      * Set payment status callback
      */
     withStatusCallback(callback: (status: string) => void): X402ClientBuilder;
@@ -353,6 +428,23 @@ declare class X402ClientBuilder {
 }
 
 /**
+ * Default facilitator contract address
+ */
+declare const DEFAULT_FACILITATOR_ADDRESS = "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7";
+/**
+ * Default chain ID (Push Chain testnet)
+ */
+declare const DEFAULT_CHAIN_ID = 42101;
+/**
+ * Default Push Chain RPC URL
+ * Source: https://push.org/docs/chain/setup/chain-config/
+ */
+declare const DEFAULT_PUSH_CHAIN_RPC = "https://evm.donut.rpc.push.org/";
+/**
+ * Default Push Network (testnet)
+ */
+declare const DEFAULT_PUSH_NETWORK: PushNetwork;
+/**
  * Load configuration from environment variables
  * Returns a partial config object with values from env vars
  */
@@ -377,10 +469,10 @@ declare function createConfig(userConfig?: X402ClientConfig): X402ClientConfig;
  *
  * Based on Push Chain documentation: https://push.org/docs/chain/setup/chain-config/
  *
- * Push Chain supports cross-chain payments via Universal Signer, allowing users
- * to pay from their native chains (Solana, Ethereum, etc.) without needing wrapped tokens.
+ * Push Chain supports cross-chain payments via Universal Transaction, allowing users
+ * to pay from their native chains (Solana, Ethereum, Base, Arbitrum, BNB) without needing wrapped tokens.
  *
- * For ERC20 token payments on Push Chain itself, token contract addresses are listed here.
+ * PRC-20 tokens are the wrapped versions of tokens from external chains on Push Chain.
  */
 /**
  * Supported chain information for Push Chain
@@ -400,6 +492,7 @@ interface TokenInfo {
     symbol: string;
     address: string;
     chain: string;
+    sourceAddress?: string;
     namespace?: string;
     gatewayAddress?: string;
     decimals?: number;
@@ -410,18 +503,15 @@ interface TokenInfo {
  */
 declare const PUSH_CHAIN_DONUT_TESTNET: SupportedChain;
 /**
- * Supported chains for cross-chain payments via Universal Signer
+ * Supported chains for cross-chain payments via Universal Transaction
  * Source: https://push.org/docs/chain/setup/chain-config/
  */
 declare const SUPPORTED_CHAINS: Record<string, SupportedChain>;
 /**
- * Supported tokens for payments on Push Chain
+ * PRC-20 Supported Tokens on Push Chain
+ * These are the wrapped versions of tokens from external chains
  *
- * Note: For cross-chain payments via Universal Signer, users can pay directly
- * from their native chains (Solana, Ethereum, etc.) without needing these addresses.
- *
- * These addresses are for ERC20 token payments ON Push Chain itself.
- * Token addresses should be verified on Push Chain explorer: https://donut.push.network
+ * Source: Push Chain official documentation
  */
 declare const SUPPORTED_TOKENS: TokenInfo[];
 /**
@@ -429,7 +519,7 @@ declare const SUPPORTED_TOKENS: TokenInfo[];
  */
 declare function getTokenBySymbol(symbol: string): TokenInfo | undefined;
 /**
- * Get token information by address
+ * Get token information by address (Push Chain PRC-20 address)
  */
 declare function getTokenByAddress(address: string): TokenInfo | undefined;
 /**
@@ -444,5 +534,9 @@ declare function getSupportedChains(): Record<string, SupportedChain>;
  * Get chain information by namespace
  */
 declare function getChainByNamespace(namespace: string): SupportedChain | undefined;
+/**
+ * Get tokens by source chain
+ */
+declare function getTokensByChain(chainName: string): TokenInfo[];
 
-export { type ChainInfo, type NetworkPreset$1 as NetworkPreset, PUSH_CHAIN_DONUT_TESTNET, type PaymentProcessorResponse, type PaymentProof, type PaymentRequirements, SUPPORTED_CHAINS, SUPPORTED_TOKENS, type SupportedChain, type TokenInfo, type UniversalSigner, type WalletProvider, X402ClientBuilder, type X402ClientConfig, X402Error, X402ErrorCode, type X402Response, createConfig, createX402Client, getChainByNamespace, getDefaultConfig, getPresetConfig, getSupportedChains, getSupportedTokens, getTokenByAddress, getTokenBySymbol, loadConfigFromEnv, mergeConfig };
+export { type ChainInfo, DEFAULT_CHAIN_ID, DEFAULT_FACILITATOR_ADDRESS, DEFAULT_PUSH_CHAIN_RPC, DEFAULT_PUSH_NETWORK, type NetworkPreset$1 as NetworkPreset, PUSH_CHAIN_DONUT_TESTNET, type PaymentProcessorResponse, type PaymentProof, type PaymentRequirements, type PushChainClient, type PushNetwork, SUPPORTED_CHAINS, SUPPORTED_TOKENS, type SolanaKeypair, type SupportedChain, type TokenInfo, type UniversalSigner, type ViemWalletClient, type WalletProvider, X402ClientBuilder, type X402ClientConfig, X402Error, X402ErrorCode, type X402Response, createConfig, createX402Client, getChainByNamespace, getDefaultConfig, getPresetConfig, getSupportedChains, getSupportedTokens, getTokenByAddress, getTokenBySymbol, getTokensByChain, loadConfigFromEnv, mergeConfig };

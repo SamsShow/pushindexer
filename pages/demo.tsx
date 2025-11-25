@@ -22,14 +22,14 @@ interface PaymentState {
   };
   paymentStatus?: string;
   facilitatorInfo?: any;
-  paymentMethod?: 'server-side' | 'universal-signer' | 'browser-wallet';
+  paymentMethod?: 'server-side' | 'universal-transaction' | 'browser-wallet';
   configMethod?: 'standard' | 'builder' | 'preset';
 }
 
 export default function Demo() {
   const [paymentState, setPaymentState] = useState<PaymentState>({ status: 'idle' });
   const [paymentStatus, setPaymentStatus] = useState<string>('');
-  const [useUniversalSigner, setUseUniversalSigner] = useState<boolean>(false);
+  const [useUniversalTx, setUseUniversalTx] = useState<boolean>(false);
   const [useBrowserWallet, setUseBrowserWallet] = useState<boolean>(false);
   const [useBuilderPattern, setUseBuilderPattern] = useState<boolean>(false);
   const [useNetworkPreset, setUseNetworkPreset] = useState<boolean>(true);
@@ -43,6 +43,7 @@ export default function Demo() {
   const [selectedToken, setSelectedToken] = useState<string>('');
   const [selectedChainId, setSelectedChainId] = useState<string>('42101');
   const [customRpcUrl, setCustomRpcUrl] = useState<string>('');
+  const [pushNetwork, setPushNetwork] = useState<'testnet' | 'mainnet'>('testnet');
 
   // Get supported tokens from SDK
   // These are provided by the SDK based on Push Chain documentation
@@ -120,7 +121,7 @@ export default function Demo() {
           console.error('Failed to connect wallet:', error);
           setWalletConnected(false);
           // Fallback to payment endpoint
-          const paymentEndpoint = useUniversalSigner 
+          const paymentEndpoint = useUniversalTx 
             ? '/api/payment/process-universal' 
             : '/api/payment/process';
           
@@ -154,7 +155,7 @@ export default function Demo() {
         }
       } else {
         // Use payment endpoint (server-side processing)
-        const paymentEndpoint = useUniversalSigner 
+        const paymentEndpoint = useUniversalTx 
           ? '/api/payment/process-universal' 
           : '/api/payment/process';
         
@@ -198,7 +199,7 @@ export default function Demo() {
     if (isMounted) {
       initClient();
     }
-  }, [useUniversalSigner, useBrowserWallet, useBuilderPattern, useNetworkPreset, debugMode, ethersAvailable, isMounted, hasEthereum]);
+  }, [useUniversalTx, useBrowserWallet, useBuilderPattern, useNetworkPreset, debugMode, ethersAvailable, isMounted, hasEthereum, pushNetwork]);
 
   const handleRequest = async () => {
     setPaymentState({ status: 'loading' });
@@ -281,7 +282,7 @@ export default function Demo() {
         },
         txHash,
         facilitatorInfo,
-        paymentMethod: useBrowserWallet ? 'browser-wallet' : (useUniversalSigner ? 'universal-signer' : 'server-side'),
+        paymentMethod: useBrowserWallet ? 'browser-wallet' : (useUniversalTx ? 'universal-transaction' : 'server-side'),
         configMethod,
       });
       setPaymentStatus('Payment successful!');
@@ -620,7 +621,7 @@ export default function Demo() {
                     onChange={(e) => {
                       setUseBrowserWallet(e.target.checked);
                       if (e.target.checked) {
-                        setUseUniversalSigner(false);
+                        setUseUniversalTx(false);
                       }
                     }}
                     disabled={!isMounted || !hasEthereum}
@@ -657,8 +658,8 @@ export default function Demo() {
 
               <div style={{ 
                 padding: '16px', 
-                background: '#fef3c7', 
-                border: '1px solid #fcd34d', 
+                background: '#dbeafe', 
+                border: '1px solid #93c5fd', 
                 borderRadius: '6px',
                 marginBottom: '16px'
               }}>
@@ -668,13 +669,13 @@ export default function Demo() {
                   gap: '12px',
                   cursor: 'pointer',
                   fontSize: '14px',
-                  color: '#92400e'
+                  color: '#1e40af'
                 }}>
                   <input
                     type="checkbox"
-                    checked={useUniversalSigner}
+                    checked={useUniversalTx}
                     onChange={(e) => {
-                      setUseUniversalSigner(e.target.checked);
+                      setUseUniversalTx(e.target.checked);
                       if (e.target.checked) {
                         setUseBrowserWallet(false);
                       }
@@ -688,23 +689,57 @@ export default function Demo() {
                     }}
                   />
                   <div>
-                    <strong>Use Universal Signer</strong>
+                    <strong>Use Universal Transaction</strong>
                     <div style={{ fontSize: '12px', marginTop: '4px', opacity: 0.8 }}>
-                      Test multi-chain payment processing with Push Chain Universal Signer
+                      Multi-chain payments via Push Chain Universal Transaction (ethers/viem/solana)
                     </div>
                   </div>
                 </label>
-                {useUniversalSigner && (
-                  <div style={{ 
-                    marginTop: '12px', 
-                    padding: '8px', 
-                    background: '#fef9c3', 
-                    borderRadius: '4px',
-                    fontSize: '12px',
-                    color: '#78350f'
-                  }}>
-                    🌐 Universal Signer mode enabled. Payments will use @pushchain/core for multi-chain support.
-                  </div>
+                {useUniversalTx && (
+                  <>
+                    <div style={{ 
+                      marginTop: '12px', 
+                      padding: '8px', 
+                      background: '#eff6ff', 
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      color: '#1e40af'
+                    }}>
+                      🚀 <strong>Universal Transaction</strong> enabled. Uses proper Push Chain flow:
+                      <ol style={{ margin: '8px 0 0 16px', padding: 0, fontSize: '11px' }}>
+                        <li>Convert signer → Universal Signer</li>
+                        <li>Initialize Push Chain Client</li>
+                        <li>Send via <code>pushChainClient.universal.sendTransaction()</code></li>
+                      </ol>
+                    </div>
+                    <div style={{ marginTop: '12px' }}>
+                      <label style={{ 
+                        display: 'block',
+                        fontSize: '12px',
+                        fontWeight: '600',
+                        marginBottom: '6px',
+                        color: '#1e40af'
+                      }}>
+                        Push Network
+                      </label>
+                      <select
+                        value={pushNetwork}
+                        onChange={(e) => setPushNetwork(e.target.value as 'testnet' | 'mainnet')}
+                        style={{
+                          width: '100%',
+                          padding: '8px',
+                          border: '1px solid #93c5fd',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                          background: '#fff',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="testnet">Testnet (Donut)</option>
+                        <option value="mainnet">Mainnet (Coming Soon)</option>
+                      </select>
+                    </div>
+                  </>
                 )}
               </div>
 
@@ -804,7 +839,7 @@ export default function Demo() {
                       ))}
                     </select>
                     <div style={{ fontSize: '11px', marginTop: '4px', color: '#6366f1', opacity: 0.8 }}>
-                      Push Chain supports payments with tokens from multiple chains via Universal Signer
+                      Push Chain supports payments with tokens from multiple chains via Universal Transaction
                       <br />
                       <a 
                         href="https://push.org/docs/chain/setup/chain-config/" 
@@ -843,7 +878,7 @@ export default function Demo() {
                             }}>
                               ⚠️ <strong>Token address needs to be configured.</strong>
                               <br />
-                              This token is supported via Universal Signer for cross-chain payments.
+                              This token is supported via Universal Transaction for cross-chain payments.
                               For ERC20 token payments on Push Chain, find the wrapped token address on{' '}
                               <a 
                                 href="https://donut.push.network" 
@@ -887,8 +922,8 @@ export default function Demo() {
                 )}
               </div>
 
-              {/* Chain Selection (for Universal Signer) */}
-              {useUniversalSigner && (
+              {/* Chain Selection (for Universal Transaction) */}
+              {useUniversalTx && (
                 <div style={{ 
                   padding: '16px', 
                   background: '#dbeafe', 
@@ -897,7 +932,7 @@ export default function Demo() {
                   marginBottom: '16px'
                 }}>
                   <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: '#1e40af' }}>
-                    🌐 Chain Selection (Universal Signer)
+                    🌐 Chain Selection (Universal Transaction)
                   </h3>
                   
                   <div style={{ marginBottom: '12px' }}>
@@ -1009,19 +1044,19 @@ export default function Demo() {
               {paymentState.paymentMethod && (
                 <div style={{ 
                   padding: '12px', 
-                  background: paymentState.paymentMethod === 'universal-signer' ? '#dbeafe' : 
+                  background: paymentState.paymentMethod === 'universal-transaction' ? '#dbeafe' : 
                              paymentState.paymentMethod === 'browser-wallet' ? '#d1fae5' : '#f3f4f6',
-                  border: `1px solid ${paymentState.paymentMethod === 'universal-signer' ? '#93c5fd' : 
+                  border: `1px solid ${paymentState.paymentMethod === 'universal-transaction' ? '#93c5fd' : 
                                   paymentState.paymentMethod === 'browser-wallet' ? '#6ee7b7' : '#d1d5db'}`,
                   borderRadius: '6px',
                   marginBottom: '16px',
                   fontSize: '14px',
-                  color: paymentState.paymentMethod === 'universal-signer' ? '#1e40af' : 
+                  color: paymentState.paymentMethod === 'universal-transaction' ? '#1e40af' : 
                          paymentState.paymentMethod === 'browser-wallet' ? '#065f46' : '#374151'
                 }}>
-                  {paymentState.paymentMethod === 'universal-signer' ? (
+                  {paymentState.paymentMethod === 'universal-transaction' ? (
                     <>
-                      🌐 <strong>Universal Signer</strong> - Multi-chain payment processed using @pushchain/core
+                      🚀 <strong>Universal Transaction</strong> - Multi-chain payment via Push Chain Client
                     </>
                   ) : paymentState.paymentMethod === 'browser-wallet' ? (
                     <>

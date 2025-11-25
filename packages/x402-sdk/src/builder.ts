@@ -80,6 +80,30 @@ export class X402ClientBuilder {
   }
 
   /**
+   * Set Viem wallet client for Viem-based applications
+   */
+  withViemClient(viemClient: any): X402ClientBuilder {
+    this.config.viemClient = viemClient;
+    return this;
+  }
+
+  /**
+   * Set Solana keypair for Solana-based transactions
+   */
+  withSolanaKeypair(keypair: any): X402ClientBuilder {
+    this.config.solanaKeypair = keypair;
+    return this;
+  }
+
+  /**
+   * Set Push Network ('testnet' or 'mainnet')
+   */
+  withPushNetwork(network: 'testnet' | 'mainnet'): X402ClientBuilder {
+    this.config.pushNetwork = network;
+    return this;
+  }
+
+  /**
    * Set payment status callback
    */
   withStatusCallback(callback: (status: string) => void): X402ClientBuilder {

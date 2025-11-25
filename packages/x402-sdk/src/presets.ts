@@ -1,4 +1,4 @@
-import type { X402ClientConfig } from './types';
+import type { X402ClientConfig, PushNetwork } from './types';
 
 /**
  * Network preset configurations
@@ -13,6 +13,7 @@ const PUSH_TESTNET_CONFIG: Partial<X402ClientConfig> = {
   facilitatorAddress: '0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7',
   chainId: 42101,
   pushChainRpcUrl: 'https://evm.donut.rpc.push.org/',
+  pushNetwork: 'testnet' as PushNetwork,
 };
 
 /**
@@ -23,6 +24,7 @@ const PUSH_MAINNET_CONFIG: Partial<X402ClientConfig> = {
   facilitatorAddress: '0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7', // TODO: Update when mainnet is available
   chainId: 42101, // TODO: Update when mainnet is available
   pushChainRpcUrl: 'https://evm.rpc-testnet-donut-node1.push.org/', // TODO: Update when mainnet is available
+  pushNetwork: 'mainnet' as PushNetwork,
 };
 
 /**

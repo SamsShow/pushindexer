@@ -30,6 +30,10 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/index.ts
 var index_exports = {};
 __export(index_exports, {
+  DEFAULT_CHAIN_ID: () => DEFAULT_CHAIN_ID,
+  DEFAULT_FACILITATOR_ADDRESS: () => DEFAULT_FACILITATOR_ADDRESS,
+  DEFAULT_PUSH_CHAIN_RPC: () => DEFAULT_PUSH_CHAIN_RPC,
+  DEFAULT_PUSH_NETWORK: () => DEFAULT_PUSH_NETWORK,
   PUSH_CHAIN_DONUT_TESTNET: () => PUSH_CHAIN_DONUT_TESTNET,
   SUPPORTED_CHAINS: () => SUPPORTED_CHAINS,
   SUPPORTED_TOKENS: () => SUPPORTED_TOKENS,
@@ -45,6 +49,7 @@ __export(index_exports, {
   getSupportedTokens: () => getSupportedTokens,
   getTokenByAddress: () => getTokenByAddress,
   getTokenBySymbol: () => getTokenBySymbol,
+  getTokensByChain: () => getTokensByChain,
   loadConfigFromEnv: () => loadConfigFromEnv,
   mergeConfig: () => mergeConfig
 });
@@ -106,6 +111,7 @@ var X402Error = class _X402Error extends Error {
 var DEFAULT_FACILITATOR_ADDRESS = "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7";
 var DEFAULT_CHAIN_ID = 42101;
 var DEFAULT_PUSH_CHAIN_RPC = "https://evm.donut.rpc.push.org/";
+var DEFAULT_PUSH_NETWORK = "testnet";
 function getEnvVar(key) {
   if (typeof process !== "undefined" && process.env) {
     return process.env[key];
@@ -133,13 +139,18 @@ function loadConfigFromEnv() {
   if (privateKey) {
     config.privateKey = privateKey;
   }
+  const pushNetwork = getEnvVar("PUSH_X402_NETWORK");
+  if (pushNetwork === "testnet" || pushNetwork === "mainnet") {
+    config.pushNetwork = pushNetwork;
+  }
   return config;
 }
 function getDefaultConfig() {
   return {
     facilitatorAddress: DEFAULT_FACILITATOR_ADDRESS,
     chainId: DEFAULT_CHAIN_ID,
-    pushChainRpcUrl: DEFAULT_PUSH_CHAIN_RPC
+    pushChainRpcUrl: DEFAULT_PUSH_CHAIN_RPC,
+    pushNetwork: DEFAULT_PUSH_NETWORK
   };
 }
 function mergeConfig(userConfig = {}) {
@@ -169,15 +180,17 @@ function createConfig(userConfig = {}) {
 var PUSH_TESTNET_CONFIG = {
   facilitatorAddress: "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7",
   chainId: 42101,
-  pushChainRpcUrl: "https://evm.donut.rpc.push.org/"
+  pushChainRpcUrl: "https://evm.donut.rpc.push.org/",
+  pushNetwork: "testnet"
 };
 var PUSH_MAINNET_CONFIG = {
   facilitatorAddress: "0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7",
   // TODO: Update when mainnet is available
   chainId: 42101,
   // TODO: Update when mainnet is available
-  pushChainRpcUrl: "https://evm.rpc-testnet-donut-node1.push.org/"
+  pushChainRpcUrl: "https://evm.rpc-testnet-donut-node1.push.org/",
   // TODO: Update when mainnet is available
+  pushNetwork: "mainnet"
 };
 function getPresetConfig(network) {
   switch (network) {
@@ -312,6 +325,75 @@ function detectChainInfo(paymentRequirements, config) {
     network: "push"
   };
 }
+async function createUniversalSignerFromEthersSigner(ethersSigner) {
+  const PushChainModule = await loadPushChain();
+  if (!PushChainModule || !PushChainModule.utils || !PushChainModule.utils.signer) {
+    console.warn("Push Chain SDK not available for Universal Signer creation");
+    return null;
+  }
+  try {
+    const universalSigner = await PushChainModule.utils.signer.toUniversal(ethersSigner);
+    return universalSigner;
+  } catch (error) {
+    console.warn("Failed to create Universal Signer from ethers:", error);
+    return null;
+  }
+}
+async function createUniversalSignerFromViemClient(viemClient) {
+  const PushChainModule = await loadPushChain();
+  if (!PushChainModule || !PushChainModule.utils || !PushChainModule.utils.signer) {
+    console.warn("Push Chain SDK not available for Universal Signer creation");
+    return null;
+  }
+  try {
+    const universalSigner = await PushChainModule.utils.signer.toUniversal(viemClient);
+    return universalSigner;
+  } catch (error) {
+    console.warn("Failed to create Universal Signer from Viem:", error);
+    return null;
+  }
+}
+async function createUniversalSignerFromSolanaKeypair(keypair, chain) {
+  const PushChainModule = await loadPushChain();
+  if (!PushChainModule || !PushChainModule.utils || !PushChainModule.utils.signer) {
+    console.warn("Push Chain SDK not available for Universal Signer creation");
+    return null;
+  }
+  try {
+    const universalSigner = await PushChainModule.utils.signer.toUniversalFromKeypair(keypair, {
+      chain: chain || PushChainModule.CONSTANTS.CHAIN.SOLANA_DEVNET,
+      library: PushChainModule.CONSTANTS.LIBRARY.SOLANA_WEB3JS
+    });
+    return universalSigner;
+  } catch (error) {
+    console.warn("Failed to create Universal Signer from Solana keypair:", error);
+    return null;
+  }
+}
+async function initializePushChainClient(universalSigner, pushNetwork = "testnet", onPaymentStatus) {
+  const PushChainModule = await loadPushChain();
+  if (!PushChainModule) {
+    throw new Error("@pushchain/core is not available. Please install it: npm install @pushchain/core");
+  }
+  const networkConstant = pushNetwork === "mainnet" ? PushChainModule.CONSTANTS.PUSH_NETWORK.MAINNET : PushChainModule.CONSTANTS.PUSH_NETWORK.TESTNET;
+  const initOptions = {
+    network: networkConstant
+  };
+  if (onPaymentStatus) {
+    initOptions.progressHook = async (progress) => {
+      onPaymentStatus(progress.title);
+    };
+  }
+  const pushChainClient = await PushChainModule.initialize(universalSigner, initOptions);
+  return pushChainClient;
+}
+async function sendUniversalTransaction(pushChainClient, txParams) {
+  if (!pushChainClient || !pushChainClient.universal || !pushChainClient.universal.sendTransaction) {
+    throw new Error("Invalid Push Chain Client: universal.sendTransaction not available");
+  }
+  const txResponse = await pushChainClient.universal.sendTransaction(txParams);
+  return txResponse;
+}
 function createX402Client(config = {}) {
   let finalConfig = config;
   if (config.network) {
@@ -325,7 +407,7 @@ function createX402Client(config = {}) {
   finalConfig = mergeConfig(finalConfig);
   const {
     paymentEndpoint,
-    // No default - users must provide walletProvider, privateKey, universalSigner, or their own endpoint
+    // No default - users must provide walletProvider, privateKey, universalSigner, viemClient, solanaKeypair, or their own endpoint
     facilitatorAddress = DEFAULT_FACILITATOR_ADDRESS,
     chainId = DEFAULT_CHAIN_ID,
     baseURL,
@@ -334,6 +416,9 @@ function createX402Client(config = {}) {
     privateKey,
     walletProvider,
     universalSigner: providedUniversalSigner,
+    viemClient,
+    solanaKeypair,
+    pushNetwork = "testnet",
     pushChainRpcUrl,
     chainRpcMap,
     debug = false
@@ -342,7 +427,10 @@ function createX402Client(config = {}) {
     hasWalletProvider: !!walletProvider,
     hasPrivateKey: !!privateKey,
     hasUniversalSigner: !!providedUniversalSigner,
+    hasViemClient: !!viemClient,
+    hasSolanaKeypair: !!solanaKeypair,
     hasPaymentEndpoint: !!paymentEndpoint,
+    pushNetwork,
     facilitatorAddress,
     chainId,
     baseURL
@@ -417,13 +505,26 @@ function createX402Client(config = {}) {
           const PushChainModule = walletProvider || privateKey ? await loadPushChain() : null;
           const ethersModule = walletProvider || privateKey ? await loadEthers() : null;
           let paymentResult;
-          if (providedUniversalSigner || PushChainModule && PushChainModule.utils && PushChainModule.utils.signer && (walletProvider || privateKey)) {
+          const canUseUniversalTx = providedUniversalSigner || viemClient || solanaKeypair || PushChainModule && PushChainModule.utils && PushChainModule.utils.signer && (walletProvider || privateKey);
+          if (canUseUniversalTx) {
             try {
               if (onPaymentStatus) {
-                onPaymentStatus(`Using Universal Signer for ${isTokenTransfer ? "token" : "native"} transfer...`);
+                onPaymentStatus(`Using Push Chain Universal Transaction for ${isTokenTransfer ? "token" : "native"} transfer...`);
               }
               let universalSigner = providedUniversalSigner;
-              if (!universalSigner && walletProvider && ethersModule && PushChainModule && PushChainModule.utils && PushChainModule.utils.signer) {
+              if (!universalSigner && viemClient) {
+                if (onPaymentStatus) {
+                  onPaymentStatus("Creating Universal Signer from Viem client...");
+                }
+                universalSigner = await createUniversalSignerFromViemClient(viemClient);
+              }
+              if (!universalSigner && solanaKeypair) {
+                if (onPaymentStatus) {
+                  onPaymentStatus("Creating Universal Signer from Solana keypair...");
+                }
+                universalSigner = await createUniversalSignerFromSolanaKeypair(solanaKeypair);
+              }
+              if (!universalSigner && walletProvider && ethersModule) {
                 if (onPaymentStatus) {
                   onPaymentStatus("Creating Universal Signer from wallet provider...");
                 }
@@ -431,187 +532,71 @@ function createX402Client(config = {}) {
                   throw new Error("Wallet provider does not support getSigner()");
                 }
                 const chainSigner = await walletProvider.getSigner();
-                universalSigner = await PushChainModule.utils.signer.toUniversal(chainSigner);
+                universalSigner = await createUniversalSignerFromEthersSigner(chainSigner);
               }
-              if (!universalSigner && privateKey && ethersModule && PushChainModule && PushChainModule.utils && PushChainModule.utils.signer) {
+              if (!universalSigner && privateKey && ethersModule) {
                 if (onPaymentStatus) {
                   onPaymentStatus("Creating Universal Signer from private key...");
                 }
                 const provider = new ethersModule.JsonRpcProvider(chainInfo.rpcUrl);
                 const ethersSigner = new ethersModule.Wallet(privateKey, provider);
-                universalSigner = await PushChainModule.utils.signer.toUniversal(ethersSigner);
+                universalSigner = await createUniversalSignerFromEthersSigner(ethersSigner);
               }
               if (!universalSigner) {
                 throw new Error("Failed to create Universal Signer");
               }
+              if (onPaymentStatus) {
+                onPaymentStatus(`Initializing Push Chain Client (${pushNetwork})...`);
+              }
+              const pushChainClient = await initializePushChainClient(
+                universalSigner,
+                pushNetwork,
+                onPaymentStatus
+              );
               const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
-              let facilitatorAbi;
-              let data;
+              const amountValue = PushChainModule.utils.helpers.parseUnits(amount.toString(), 18);
+              let txData;
               let txValue = BigInt(0);
               if (isTokenTransfer) {
-                const amountWei = ethersModule ? ethersModule.parseEther(amount.toString()) : BigInt(Number(amount) * 1e18);
-                facilitatorAbi = [
-                  "function facilitateTokenTransfer(address token, address recipient, uint256 amount) external"
-                ];
-                const iface = ethersModule ? new ethersModule.Interface(facilitatorAbi) : null;
-                data = iface ? iface.encodeFunctionData("facilitateTokenTransfer", [tokenAddress, recipient, amountWei]) : "0x";
+                if (ethersModule) {
+                  const facilitatorAbi = [
+                    "function facilitateTokenTransfer(address token, address recipient, uint256 amount) external"
+                  ];
+                  const iface = new ethersModule.Interface(facilitatorAbi);
+                  txData = iface.encodeFunctionData("facilitateTokenTransfer", [tokenAddress, recipient, amountValue]);
+                }
                 if (onPaymentStatus) {
                   onPaymentStatus(`Preparing token transfer: ${amount} tokens from ${tokenAddress}...`);
                 }
               } else {
-                const amountWei = ethersModule ? ethersModule.parseEther(amount.toString()) : BigInt(Number(amount) * 1e18);
-                txValue = amountWei;
-                facilitatorAbi = [
-                  "function facilitateNativeTransfer(address recipient, uint256 amount) external payable"
-                ];
-                const iface = ethersModule ? new ethersModule.Interface(facilitatorAbi) : null;
-                data = iface ? iface.encodeFunctionData("facilitateNativeTransfer", [recipient, amountWei]) : "0x";
+                txValue = amountValue;
+                if (ethersModule) {
+                  const facilitatorAbi = [
+                    "function facilitateNativeTransfer(address recipient, uint256 amount) external payable"
+                  ];
+                  const iface = new ethersModule.Interface(facilitatorAbi);
+                  txData = iface.encodeFunctionData("facilitateNativeTransfer", [recipient, amountValue]);
+                }
               }
-              let txResult;
-              if (typeof universalSigner.sendTransaction === "function") {
-                const txRequest = {
-                  to: facilitatorContractAddress,
-                  data
-                };
-                if (!isTokenTransfer) {
-                  txRequest.value = txValue;
-                }
-                txResult = await universalSigner.sendTransaction(txRequest);
-              } else if (walletProvider && ethersModule) {
-                if (onPaymentStatus) {
-                  onPaymentStatus("Universal Signer: Using underlying wallet provider for transaction...");
-                }
-                if (!walletProvider.getSigner) {
-                  throw new Error("Wallet provider does not support getSigner()");
-                }
-                const signer = await walletProvider.getSigner();
-                const contract = new ethersModule.Contract(facilitatorContractAddress, facilitatorAbi, signer);
-                if (isTokenTransfer) {
-                  const amountWei = ethersModule.parseEther(amount.toString());
-                  const tokenAbi = ["function approve(address spender, uint256 amount) external returns (bool)"];
-                  const tokenContract = new ethersModule.Contract(tokenAddress, tokenAbi, signer);
-                  if (onPaymentStatus) {
-                    onPaymentStatus("Approving token spend...");
-                  }
-                  const allowanceAbi = ["function allowance(address owner, address spender) external view returns (uint256)"];
-                  const allowanceContract = new ethersModule.Contract(tokenAddress, allowanceAbi, signer);
-                  const currentAllowance = await allowanceContract.allowance(await signer.getAddress(), facilitatorContractAddress);
-                  if (currentAllowance < amountWei) {
-                    const approveTx = await tokenContract.approve(facilitatorContractAddress, amountWei);
-                    await approveTx.wait();
-                    if (onPaymentStatus) {
-                      onPaymentStatus("Token approval confirmed, proceeding with transfer...");
-                    }
-                  }
-                  const gasEstimate = await contract.facilitateTokenTransfer.estimateGas(
-                    tokenAddress,
-                    recipient,
-                    amountWei
-                  );
-                  const tx = await contract.facilitateTokenTransfer(tokenAddress, recipient, amountWei, {
-                    gasLimit: gasEstimate
-                  });
-                  const receipt = await tx.wait();
-                  let chainId2 = chainInfo.chainId;
-                  if (walletProvider.getNetwork) {
-                    const network = await walletProvider.getNetwork();
-                    chainId2 = typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString();
-                  }
-                  txResult = {
-                    hash: tx.hash,
-                    chainId: chainId2.toString(),
-                    blockNumber: receipt.blockNumber
-                  };
-                } else {
-                  const amountWei = ethersModule.parseEther(amount.toString());
-                  const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
-                    recipient,
-                    amountWei,
-                    { value: amountWei }
-                  );
-                  const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
-                    value: amountWei,
-                    gasLimit: gasEstimate
-                  });
-                  const receipt = await tx.wait();
-                  let chainId2 = chainInfo.chainId;
-                  if (walletProvider.getNetwork) {
-                    const network = await walletProvider.getNetwork();
-                    chainId2 = typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString();
-                  }
-                  txResult = {
-                    hash: tx.hash,
-                    chainId: chainId2.toString(),
-                    blockNumber: receipt.blockNumber
-                  };
-                }
-              } else if (privateKey && ethersModule) {
-                if (onPaymentStatus) {
-                  onPaymentStatus(`Using private key with Universal Signer for ${isTokenTransfer ? "token" : "native"} transfer...`);
-                }
-                const provider = new ethersModule.JsonRpcProvider(chainInfo.rpcUrl);
-                const ethersSigner = new ethersModule.Wallet(privateKey, provider);
-                const contract = new ethersModule.Contract(facilitatorContractAddress, facilitatorAbi, ethersSigner);
-                if (isTokenTransfer) {
-                  const amountWei = ethersModule.parseEther(amount.toString());
-                  const tokenAbi = ["function approve(address spender, uint256 amount) external returns (bool)"];
-                  const tokenContract = new ethersModule.Contract(tokenAddress, tokenAbi, ethersSigner);
-                  if (onPaymentStatus) {
-                    onPaymentStatus("Approving token spend...");
-                  }
-                  const allowanceAbi = ["function allowance(address owner, address spender) external view returns (uint256)"];
-                  const allowanceContract = new ethersModule.Contract(tokenAddress, allowanceAbi, ethersSigner);
-                  const currentAllowance = await allowanceContract.allowance(await ethersSigner.getAddress(), facilitatorContractAddress);
-                  if (currentAllowance < amountWei) {
-                    const approveTx = await tokenContract.approve(facilitatorContractAddress, amountWei);
-                    await approveTx.wait();
-                    if (onPaymentStatus) {
-                      onPaymentStatus("Token approval confirmed, proceeding with transfer...");
-                    }
-                  }
-                  const gasEstimate = await contract.facilitateTokenTransfer.estimateGas(
-                    tokenAddress,
-                    recipient,
-                    amountWei
-                  );
-                  const tx = await contract.facilitateTokenTransfer(tokenAddress, recipient, amountWei, {
-                    gasLimit: gasEstimate
-                  });
-                  const receipt = await tx.wait();
-                  const network = await provider.getNetwork();
-                  txResult = {
-                    hash: tx.hash,
-                    chainId: typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString(),
-                    blockNumber: receipt.blockNumber
-                  };
-                } else {
-                  const amountWei = ethersModule.parseEther(amount.toString());
-                  const gasEstimate = await contract.facilitateNativeTransfer.estimateGas(
-                    recipient,
-                    amountWei,
-                    { value: amountWei }
-                  );
-                  const tx = await contract.facilitateNativeTransfer(recipient, amountWei, {
-                    value: amountWei,
-                    gasLimit: gasEstimate
-                  });
-                  const receipt = await tx.wait();
-                  const network = await provider.getNetwork();
-                  txResult = {
-                    hash: tx.hash,
-                    chainId: typeof network.chainId === "bigint" ? network.chainId.toString() : network.chainId.toString(),
-                    blockNumber: receipt.blockNumber
-                  };
-                }
-              } else {
-                throw new Error("Cannot use Universal Signer without walletProvider or privateKey");
+              if (onPaymentStatus) {
+                onPaymentStatus("Sending Universal Transaction...");
               }
+              const txParams = {
+                to: facilitatorContractAddress
+              };
+              if (!isTokenTransfer) {
+                txParams.value = txValue;
+              }
+              if (txData) {
+                txParams.data = txData;
+              }
+              const txResponse = await sendUniversalTransaction(pushChainClient, txParams);
               if (onPaymentStatus) {
                 onPaymentStatus("Transaction sent, waiting for confirmation...");
               }
-              const txHash = typeof txResult === "string" ? txResult : txResult?.hash || txResult?.txHash || String(txResult);
+              const txHash = txResponse.hash || txResponse.txHash || String(txResponse);
               if (!txHash || txHash === "[object Object]") {
-                throw new Error("Invalid transaction result from Universal Signer");
+                throw new Error("Invalid transaction result from Universal Transaction");
               }
               const accountChainId = universalSigner.account?.chain || chainInfo.chainId;
               const resolvedChainId = typeof accountChainId === "string" ? accountChainId.split(":")[1] || accountChainId : accountChainId;
@@ -623,17 +608,9 @@ function createX402Client(config = {}) {
                 chainId: String(resolvedChainId || chainInfo.chainId)
               };
             } catch (universalError) {
-              const isBytesLikeError = universalError.message?.includes("invalid BytesLike value") || universalError.code === "INVALID_ARGUMENT";
-              if (isBytesLikeError) {
-                console.warn("Universal Signer incompatible with current ethers.js version. Skipping Universal Signer.");
-                if (onPaymentStatus) {
-                  onPaymentStatus("Universal Signer incompatible. Using ethers.js fallback...");
-                }
-              } else {
-                console.warn("Universal Signer failed, falling back to ethers.js:", universalError);
-                if (onPaymentStatus) {
-                  onPaymentStatus(`Universal Signer failed: ${universalError.message}. Using fallback...`);
-                }
+              console.warn("Universal Transaction failed, falling back to direct ethers.js:", universalError);
+              if (onPaymentStatus) {
+                onPaymentStatus(`Universal Transaction failed: ${universalError.message}. Using fallback...`);
               }
               paymentResult = void 0;
             }
@@ -850,17 +827,21 @@ function createX402Client(config = {}) {
             paymentResult = paymentResponse.data;
           }
           if (!paymentResult) {
-            const errorMessage = "Payment processing failed: No payment method available. Please provide one of: walletProvider, privateKey, universalSigner, or paymentEndpoint. The SDK calls the facilitator contract directly - no serverless API required!";
+            const errorMessage = "Payment processing failed: No payment method available. Please provide one of: walletProvider, privateKey, universalSigner, viemClient, solanaKeypair, or paymentEndpoint. The SDK uses Push Chain Universal Transactions for multi-chain support!";
             debugLog(finalConfig, "No payment method available", {
               hasWalletProvider: !!walletProvider,
               hasPrivateKey: !!privateKey,
               hasUniversalSigner: !!providedUniversalSigner,
+              hasViemClient: !!viemClient,
+              hasSolanaKeypair: !!solanaKeypair,
               hasPaymentEndpoint: !!paymentEndpoint
             });
             throw new X402Error(errorMessage, "PAYMENT_METHOD_NOT_AVAILABLE" /* PAYMENT_METHOD_NOT_AVAILABLE */, {
               hasWalletProvider: !!walletProvider,
               hasPrivateKey: !!privateKey,
               hasUniversalSigner: !!providedUniversalSigner,
+              hasViemClient: !!viemClient,
+              hasSolanaKeypair: !!solanaKeypair,
               hasPaymentEndpoint: !!paymentEndpoint
             });
           }
@@ -991,6 +972,27 @@ var X402ClientBuilder = class _X402ClientBuilder {
     return this;
   }
   /**
+   * Set Viem wallet client for Viem-based applications
+   */
+  withViemClient(viemClient) {
+    this.config.viemClient = viemClient;
+    return this;
+  }
+  /**
+   * Set Solana keypair for Solana-based transactions
+   */
+  withSolanaKeypair(keypair) {
+    this.config.solanaKeypair = keypair;
+    return this;
+  }
+  /**
+   * Set Push Network ('testnet' or 'mainnet')
+   */
+  withPushNetwork(network) {
+    this.config.pushNetwork = network;
+    return this;
+  }
+  /**
    * Set payment status callback
    */
   withStatusCallback(callback) {
@@ -1077,6 +1079,24 @@ var SUPPORTED_CHAINS = {
     chainId: 11155111,
     gatewayAddress: "0x05bD7a3D18324c1F7e216f7fBF2b15985aE5281A"
   },
+  "arbitrum-sepolia": {
+    name: "Arbitrum Sepolia Testnet",
+    namespace: "eip155:421614",
+    chainId: 421614,
+    gatewayAddress: "0x2cd870e0166Ba458dEC615168Fd659AacD795f34"
+  },
+  "base-sepolia": {
+    name: "Base Sepolia Testnet",
+    namespace: "eip155:84532",
+    chainId: 84532,
+    gatewayAddress: "0xFD4fef1F43aFEc8b5bcdEEc47f35a1431479aC16"
+  },
+  "bnb-testnet": {
+    name: "BNB Testnet",
+    namespace: "eip155:97",
+    chainId: 97,
+    gatewayAddress: "0x44aFFC61983F4348DdddB886349eb992C061EaC0"
+  },
   "solana-devnet": {
     name: "Solana Devnet",
     namespace: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
@@ -1084,44 +1104,201 @@ var SUPPORTED_CHAINS = {
   }
 };
 var SUPPORTED_TOKENS = [
+  // ═══════════════════════════════════════════════════════════════
+  // NATIVE TOKEN
+  // ═══════════════════════════════════════════════════════════════
   {
     name: "Push Chain Native Token",
     symbol: "PC",
     address: "0x0000000000000000000000000000000000000000",
-    // Native token, no address needed
+    // Native token
     chain: "Push Chain",
     namespace: "eip155:42101",
     decimals: 18
   },
+  // ═══════════════════════════════════════════════════════════════
+  // ETHEREUM SEPOLIA TOKENS
+  // ═══════════════════════════════════════════════════════════════
   {
-    name: "Solana (SOL)",
-    symbol: "SOL",
-    address: "0x0000000000000000000000000000000000000000",
-    // TODO: Find wrapped SOL address on Push Chain
-    chain: "Solana Devnet",
-    namespace: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
-    gatewayAddress: "CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS",
-    decimals: 9
-    // Solana uses 9 decimals
-  },
-  {
-    name: "Ethereum (ETH)",
-    symbol: "ETH",
-    address: "0x0000000000000000000000000000000000000000",
-    // TODO: Find wrapped ETH address on Push Chain
+    name: "Wrapped ETH (Ethereum Sepolia)",
+    symbol: "pETH",
+    address: "0x2971824Db68229D087931155C2b8bB820B275809",
     chain: "Ethereum Sepolia",
+    sourceAddress: "0x0000000000000000000000000000000000000000",
     namespace: "eip155:11155111",
     gatewayAddress: "0x05bD7a3D18324c1F7e216f7fBF2b15985aE5281A",
     decimals: 18
   },
   {
-    name: "USDC",
-    symbol: "USDC",
-    address: "0x0000000000000000000000000000000000000000",
-    // TODO: Find USDC address on Push Chain
-    chain: "Multi-chain",
+    name: "Wrapped ETH (WETH)",
+    symbol: "WETH.eth",
+    address: "0x0d0dF7E8807430A81104EA84d926139816eC7586",
+    chain: "Ethereum Sepolia",
+    sourceAddress: "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
+    namespace: "eip155:11155111",
+    gatewayAddress: "0x05bD7a3D18324c1F7e216f7fBF2b15985aE5281A",
+    decimals: 18
+  },
+  {
+    name: "USDT (Ethereum Sepolia)",
+    symbol: "USDT.eth",
+    address: "0xCA0C5E6F002A389E1580F0DB7cd06e4549B5F9d3",
+    chain: "Ethereum Sepolia",
+    sourceAddress: "0x7169D38820dfd117C3FA1f22a697dBA58d90BA06",
+    namespace: "eip155:11155111",
+    gatewayAddress: "0x05bD7a3D18324c1F7e216f7fBF2b15985aE5281A",
     decimals: 6
-    // USDC uses 6 decimals
+  },
+  {
+    name: "stETH (Ethereum Sepolia)",
+    symbol: "stETH.eth",
+    address: "0xaf89E805949c628ebde3262e91dc4ab9eA12668E",
+    chain: "Ethereum Sepolia",
+    sourceAddress: "0x3e3FE7dBc6B4C189E7128855dD526361c49b40Af",
+    namespace: "eip155:11155111",
+    gatewayAddress: "0x05bD7a3D18324c1F7e216f7fBF2b15985aE5281A",
+    decimals: 18
+  },
+  {
+    name: "USDC (Ethereum Sepolia)",
+    symbol: "USDC.eth",
+    address: "0x387b9C8Db60E74999aAAC5A2b7825b400F12d68E",
+    chain: "Ethereum Sepolia",
+    sourceAddress: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+    namespace: "eip155:11155111",
+    gatewayAddress: "0x05bD7a3D18324c1F7e216f7fBF2b15985aE5281A",
+    decimals: 6
+  },
+  // ═══════════════════════════════════════════════════════════════
+  // SOLANA DEVNET TOKENS
+  // ═══════════════════════════════════════════════════════════════
+  {
+    name: "Wrapped SOL (Solana Devnet)",
+    symbol: "pSOL",
+    address: "0x5D525Df2bD99a6e7ec58b76aF2fd95F39874EBed",
+    chain: "Solana Devnet",
+    namespace: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+    gatewayAddress: "CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS",
+    decimals: 9
+  },
+  {
+    name: "USDC (Solana Devnet)",
+    symbol: "USDC.sol",
+    address: "0x04B8F634ABC7C879763F623e0f0550a4b5c4426F",
+    chain: "Solana Devnet",
+    sourceAddress: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    namespace: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+    gatewayAddress: "CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS",
+    decimals: 6
+  },
+  {
+    name: "USDT (Solana Devnet)",
+    symbol: "USDT.sol",
+    address: "0x4f1A3D22d170a2F4Bddb37845a962322e24f4e34",
+    chain: "Solana Devnet",
+    sourceAddress: "EiXDnrAg9ea2Q6vEPV7E5TpTU1vh41jcuZqKjU5Dc4ZF",
+    namespace: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+    gatewayAddress: "CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS",
+    decimals: 6
+  },
+  {
+    name: "DAI (Solana Devnet)",
+    symbol: "DAI.sol",
+    address: "0x5861f56A556c990358cc9cccd8B5baa3767982A8",
+    chain: "Solana Devnet",
+    sourceAddress: "G2ZLaRhpohW23KTEX3fBjZXtNTFFwemqCaWWnWVTj4TB",
+    namespace: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+    gatewayAddress: "CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS",
+    decimals: 18
+  },
+  // ═══════════════════════════════════════════════════════════════
+  // BASE SEPOLIA TOKENS
+  // ═══════════════════════════════════════════════════════════════
+  {
+    name: "Wrapped ETH (Base Sepolia)",
+    symbol: "pETH.base",
+    address: "0xc7007af2B24D4eb963fc9633B0c66e1d2D90Fc21",
+    chain: "Base Sepolia",
+    sourceAddress: "0x0000000000000000000000000000000000000000",
+    namespace: "eip155:84532",
+    gatewayAddress: "0xFD4fef1F43aFEc8b5bcdEEc47f35a1431479aC16",
+    decimals: 18
+  },
+  {
+    name: "USDT (Base Sepolia)",
+    symbol: "USDT.base",
+    address: "0x2C455189D2af6643B924A981a9080CcC63d5a567",
+    chain: "Base Sepolia",
+    sourceAddress: "0x9FF5a186f53F6E6964B00320Da1D2024DE11E0cB",
+    namespace: "eip155:84532",
+    gatewayAddress: "0xFD4fef1F43aFEc8b5bcdEEc47f35a1431479aC16",
+    decimals: 6
+  },
+  {
+    name: "USDC (Base Sepolia)",
+    symbol: "USDC.base",
+    address: "0x84B62e44F667F692F7739Ca6040cD17DA02068A8",
+    chain: "Base Sepolia",
+    sourceAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    namespace: "eip155:84532",
+    gatewayAddress: "0xFD4fef1F43aFEc8b5bcdEEc47f35a1431479aC16",
+    decimals: 6
+  },
+  // ═══════════════════════════════════════════════════════════════
+  // ARBITRUM SEPOLIA TOKENS
+  // ═══════════════════════════════════════════════════════════════
+  {
+    name: "Wrapped ETH (Arbitrum Sepolia)",
+    symbol: "pETH.arb",
+    address: "0xc0a821a1AfEd1322c5e15f1F4586C0B8cE65400e",
+    chain: "Arbitrum Sepolia",
+    sourceAddress: "0x0000000000000000000000000000000000000000",
+    namespace: "eip155:421614",
+    gatewayAddress: "0x2cd870e0166Ba458dEC615168Fd659AacD795f34",
+    decimals: 18
+  },
+  {
+    name: "USDC (Arbitrum Sepolia)",
+    symbol: "USDC.arb",
+    address: "0xa261A10e94aE4bA88EE8c5845CbE7266bD679DD6",
+    chain: "Arbitrum Sepolia",
+    sourceAddress: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+    namespace: "eip155:421614",
+    gatewayAddress: "0x2cd870e0166Ba458dEC615168Fd659AacD795f34",
+    decimals: 6
+  },
+  {
+    name: "USDT (Arbitrum Sepolia)",
+    symbol: "USDT.arb",
+    address: "0x76Ad08339dF606BeEDe06f90e3FaF82c5b2fb2E9",
+    chain: "Arbitrum Sepolia",
+    sourceAddress: "0x1419d7C74D234fA6B73E06A2ce7822C1d37922f0",
+    namespace: "eip155:421614",
+    gatewayAddress: "0x2cd870e0166Ba458dEC615168Fd659AacD795f34",
+    decimals: 6
+  },
+  // ═══════════════════════════════════════════════════════════════
+  // BNB TESTNET TOKENS
+  // ═══════════════════════════════════════════════════════════════
+  {
+    name: "Wrapped BNB (BNB Testnet)",
+    symbol: "pBNB",
+    address: "0x7a9082dA308f3fa005beA7dB0d203b3b86664E36",
+    chain: "BNB Testnet",
+    sourceAddress: "0x0000000000000000000000000000000000000000",
+    namespace: "eip155:97",
+    gatewayAddress: "0x44aFFC61983F4348DdddB886349eb992C061EaC0",
+    decimals: 18
+  },
+  {
+    name: "USDT (BNB Testnet)",
+    symbol: "USDT.bnb",
+    address: "0x2f98B4235FD2BA0173a2B056D722879360B12E7b",
+    chain: "BNB Testnet",
+    sourceAddress: "0xBC14F348BC9667be46b35Edc9B68653d86013DC5",
+    namespace: "eip155:97",
+    gatewayAddress: "0x44aFFC61983F4348DdddB886349eb992C061EaC0",
+    decimals: 6
   }
 ];
 function getTokenBySymbol(symbol) {
@@ -1141,8 +1318,17 @@ function getSupportedChains() {
 function getChainByNamespace(namespace) {
   return Object.values(SUPPORTED_CHAINS).find((chain) => chain.namespace === namespace);
 }
+function getTokensByChain(chainName) {
+  return SUPPORTED_TOKENS.filter(
+    (token) => token.chain.toLowerCase().includes(chainName.toLowerCase())
+  );
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  DEFAULT_CHAIN_ID,
+  DEFAULT_FACILITATOR_ADDRESS,
+  DEFAULT_PUSH_CHAIN_RPC,
+  DEFAULT_PUSH_NETWORK,
   PUSH_CHAIN_DONUT_TESTNET,
   SUPPORTED_CHAINS,
   SUPPORTED_TOKENS,
@@ -1158,6 +1344,7 @@ function getChainByNamespace(namespace) {
   getSupportedTokens,
   getTokenByAddress,
   getTokenBySymbol,
+  getTokensByChain,
   loadConfigFromEnv,
   mergeConfig
 });

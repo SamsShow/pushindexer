@@ -1,4 +1,4 @@
-import type { X402ClientConfig } from './types';
+import type { X402ClientConfig, PushNetwork } from './types';
 
 /**
  * Default facilitator contract address
@@ -15,6 +15,11 @@ export const DEFAULT_CHAIN_ID = 42101;
  * Source: https://push.org/docs/chain/setup/chain-config/
  */
 export const DEFAULT_PUSH_CHAIN_RPC = 'https://evm.donut.rpc.push.org/';
+
+/**
+ * Default Push Network (testnet)
+ */
+export const DEFAULT_PUSH_NETWORK: PushNetwork = 'testnet';
 
 /**
  * Get environment variable value
@@ -64,6 +69,12 @@ export function loadConfigFromEnv(): Partial<X402ClientConfig> {
     config.privateKey = privateKey;
   }
 
+  // Load Push Network from env
+  const pushNetwork = getEnvVar('PUSH_X402_NETWORK');
+  if (pushNetwork === 'testnet' || pushNetwork === 'mainnet') {
+    config.pushNetwork = pushNetwork;
+  }
+
   return config;
 }
 
@@ -75,6 +86,7 @@ export function getDefaultConfig(): Partial<X402ClientConfig> {
     facilitatorAddress: DEFAULT_FACILITATOR_ADDRESS,
     chainId: DEFAULT_CHAIN_ID,
     pushChainRpcUrl: DEFAULT_PUSH_CHAIN_RPC,
+    pushNetwork: DEFAULT_PUSH_NETWORK,
   };
 }
 
