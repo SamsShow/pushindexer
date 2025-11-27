@@ -243,14 +243,43 @@ async function loadPushChain() {
   pushChainPromise = (async () => {
     try {
       const pushChainModule = await import("@pushchain/core");
-      PushChain = pushChainModule.default || pushChainModule;
+      console.log("[x402-sdk] @pushchain/core imported:", {
+        hasDefault: !!pushChainModule.default,
+        keys: Object.keys(pushChainModule).slice(0, 10),
+        // Limit keys for logging
+        hasPushChainExport: !!pushChainModule.PushChain
+      });
+      if (pushChainModule.PushChain) {
+        PushChain = pushChainModule.PushChain;
+      } else if (pushChainModule.default?.PushChain) {
+        PushChain = pushChainModule.default.PushChain;
+      } else if (pushChainModule.default) {
+        PushChain = pushChainModule.default;
+      } else {
+        PushChain = pushChainModule;
+      }
+      console.log("[x402-sdk] PushChain loaded:", {
+        hasUtils: !!PushChain?.utils,
+        hasSigner: !!PushChain?.utils?.signer,
+        hasToUniversal: typeof PushChain?.utils?.signer?.toUniversal === "function",
+        hasConstants: !!PushChain?.CONSTANTS,
+        hasInitialize: typeof PushChain?.initialize === "function",
+        type: typeof PushChain
+      });
       return PushChain;
     } catch (error) {
+      console.warn("[x402-sdk] Failed to import @pushchain/core:", error?.message || error);
       if (typeof require !== "undefined") {
         try {
-          PushChain = require("@pushchain/core");
+          const reqModule = require("@pushchain/core");
+          PushChain = reqModule.PushChain || reqModule.default?.PushChain || reqModule;
+          console.log("[x402-sdk] PushChain loaded via require:", {
+            hasUtils: !!PushChain?.utils,
+            hasSigner: !!PushChain?.utils?.signer
+          });
           return PushChain;
-        } catch {
+        } catch (reqError) {
+          console.warn("[x402-sdk] Failed to require @pushchain/core:", reqError?.message || reqError);
         }
       }
       return null;
@@ -326,33 +355,6 @@ function detectChainInfo(paymentRequirements, config) {
   };
 }
 var PUSH_CHAIN_ID = "42101";
-var SOURCE_CHAIN_TOKEN_MAP = {
-  // Ethereum Sepolia (11155111)
-  "11155111": {
-    "native": "ETH",
-    "USDT": "USDT",
-    "USDC": "USDC",
-    "WETH": "WETH",
-    "stETH": "stETH"
-  },
-  // Base Sepolia (84532)
-  "84532": {
-    "native": "ETH",
-    "USDT": "USDT",
-    "USDC": "USDC"
-  },
-  // Arbitrum Sepolia (421614)
-  "421614": {
-    "native": "ETH",
-    "USDT": "USDT",
-    "USDC": "USDC"
-  },
-  // BNB Testnet (97)
-  "97": {
-    "native": "BNB",
-    "USDT": "USDT"
-  }
-};
 async function detectWalletChainId(walletProvider, signer, debugConfig) {
   let walletChainId;
   const isBrowser = typeof globalThis !== "undefined" && typeof globalThis.window !== "undefined";
@@ -606,7 +608,20 @@ function createX402Client(config = {}) {
             pushChainId: PUSH_CHAIN_ID,
             targetChainId: chainInfo.chainId
           });
-          const canUseUniversalTx = !isWalletOnPushChain && (providedUniversalSigner || viemClient || solanaKeypair || PushChainModule && PushChainModule.utils && PushChainModule.utils.signer && (walletProvider || privateKey));
+          const hasPushChainSigner = PushChainModule && PushChainModule.utils && PushChainModule.utils.signer;
+          const canUseUniversalTx = !isWalletOnPushChain && (providedUniversalSigner || viemClient || solanaKeypair || hasPushChainSigner && (walletProvider || privateKey));
+          console.log("[x402-sdk] Universal Transaction check:", {
+            isWalletOnPushChain,
+            walletChainId,
+            pushChainId: PUSH_CHAIN_ID,
+            hasPushChainModule: !!PushChainModule,
+            hasPushChainUtils: !!PushChainModule?.utils,
+            hasPushChainSigner: !!PushChainModule?.utils?.signer,
+            hasWalletProvider: !!walletProvider,
+            hasPrivateKey: !!privateKey,
+            canUseUniversalTx,
+            isTokenTransfer
+          });
           if (canUseUniversalTx) {
             try {
               if (onPaymentStatus) {
@@ -654,88 +669,61 @@ function createX402Client(config = {}) {
                 pushNetwork,
                 onPaymentStatus
               );
-              const facilitatorContractAddress = facilitatorAddress || paymentRequirements.facilitator || DEFAULT_FACILITATOR_ADDRESS;
-              const amountValue = PushChainModule.utils.helpers.parseUnits(amount.toString(), 18);
-              let txData;
-              let txValue = BigInt(0);
-              if (isTokenTransfer) {
-                if (ethersModule) {
-                  const facilitatorAbi = [
-                    "function facilitateTokenTransfer(address token, address recipient, uint256 amount) external"
-                  ];
-                  const iface = new ethersModule.Interface(facilitatorAbi);
-                  txData = iface.encodeFunctionData("facilitateTokenTransfer", [tokenAddress, recipient, amountValue]);
-                }
-                if (onPaymentStatus) {
-                  onPaymentStatus(`Preparing token transfer: ${amount} tokens from ${tokenAddress}...`);
-                }
-              } else {
-                txValue = amountValue;
-                if (ethersModule) {
-                  const facilitatorAbi = [
-                    "function facilitateNativeTransfer(address recipient, uint256 amount) external payable"
-                  ];
-                  const iface = new ethersModule.Interface(facilitatorAbi);
-                  txData = iface.encodeFunctionData("facilitateNativeTransfer", [recipient, amountValue]);
-                }
-              }
               if (onPaymentStatus) {
-                onPaymentStatus(`Sending Cross-Chain Universal Transaction from chain ${walletChainId}...`);
+                onPaymentStatus(`Preparing cross-chain ${isTokenTransfer ? "token" : "native"} transfer from chain ${walletChainId}...`);
               }
-              const txParams = {
-                to: recipient
-                // Send directly to recipient on Push Chain
-              };
-              if (txData) {
-                txParams.to = facilitatorContractAddress;
-                txParams.data = txData;
-              }
-              if (walletChainId && walletChainId !== PUSH_CHAIN_ID) {
-                if (onPaymentStatus) {
-                  onPaymentStatus(`Bridging ${isTokenTransfer ? "tokens" : "native assets"} from chain ${walletChainId} to Push Chain...`);
-                }
+              let moveableToken;
+              if (isTokenTransfer) {
+                const tokenSymbol = paymentRequirements.tokenSymbol || "USDC";
                 try {
-                  if (isTokenTransfer) {
-                    const tokenSymbol = paymentRequirements.tokenSymbol || "USDT";
-                    const moveableToken = pushChainClient.moveable?.token?.[tokenSymbol];
-                    if (moveableToken) {
-                      txParams.funds = {
-                        amount: amountValue,
-                        token: moveableToken
-                      };
-                      if (onPaymentStatus) {
-                        onPaymentStatus(`Using moveable token ${tokenSymbol} for cross-chain bridge...`);
-                      }
-                    } else {
-                      console.warn(`Moveable token ${tokenSymbol} not found, attempting native transfer`);
-                      txParams.value = txValue;
-                    }
-                  } else {
-                    const chainTokenMap = SOURCE_CHAIN_TOKEN_MAP[walletChainId];
-                    const nativeTokenSymbol = chainTokenMap?.native || "ETH";
-                    const moveableNativeToken = pushChainClient.moveable?.token?.[nativeTokenSymbol];
-                    if (moveableNativeToken) {
-                      txParams.funds = {
-                        amount: amountValue,
-                        token: moveableNativeToken
-                      };
-                      if (onPaymentStatus) {
-                        onPaymentStatus(`Using moveable native token ${nativeTokenSymbol} for cross-chain bridge...`);
-                      }
-                    } else {
-                      txParams.value = amountValue;
-                    }
+                  moveableToken = pushChainClient.moveable?.token?.[tokenSymbol];
+                  if (!moveableToken) {
+                    moveableToken = pushChainClient.moveable?.token?.USDT;
                   }
-                } catch (fundsError) {
-                  console.warn("Could not set up funds field, attempting direct transfer:", fundsError);
-                  if (!isTokenTransfer) {
-                    txParams.value = txValue;
-                  }
+                } catch (e) {
+                  console.warn(`Could not find moveable token ${tokenSymbol}:`, e);
+                }
+                if (!moveableToken) {
+                  throw new Error(`Token ${tokenSymbol} is not available for bridging from this chain. Please use USDC or USDT.`);
+                }
+                if (onPaymentStatus) {
+                  onPaymentStatus(`Using ${moveableToken.symbol} for cross-chain bridge...`);
                 }
               } else {
-                if (!isTokenTransfer) {
-                  txParams.value = txValue;
+                try {
+                  moveableToken = pushChainClient.moveable?.token?.ETH;
+                } catch (e) {
+                  console.warn("Could not find ETH moveable token:", e);
                 }
+                if (!moveableToken) {
+                  throw new Error("Native ETH bridging is not available from this chain.");
+                }
+                if (onPaymentStatus) {
+                  onPaymentStatus(`Using native ${moveableToken.symbol} for cross-chain bridge...`);
+                }
+              }
+              const decimals = moveableToken?.decimals || 18;
+              const amountValue = PushChainModule.utils.helpers.parseUnits(amount.toString(), decimals);
+              console.log("[x402-sdk] Universal Transaction setup:", {
+                recipient,
+                amount: amount.toString(),
+                decimals,
+                amountValue: amountValue.toString(),
+                tokenSymbol: moveableToken?.symbol,
+                tokenMechanism: moveableToken?.mechanism,
+                isTokenTransfer
+              });
+              const txParams = {
+                to: recipient,
+                // Send directly to recipient on Push Chain
+                funds: {
+                  amount: amountValue,
+                  token: moveableToken
+                }
+                // NO 'data' field = pure bridging = supports native ETH!
+              };
+              if (onPaymentStatus) {
+                onPaymentStatus(`Sending ${moveableToken?.symbol || "tokens"} to ${recipient.slice(0, 10)}... on Push Chain...`);
               }
               debugLog(finalConfig, "Universal Transaction params", {
                 to: txParams.to,
@@ -809,17 +797,18 @@ function createX402Client(config = {}) {
                   const provider = walletSigner.provider || new ethersForWallet.JsonRpcProvider(chainInfo.rpcUrl);
                   const code = await provider.getCode(tokenAddress);
                   if (code === "0x" || code === "0x0") {
-                    throw new Error(`Token contract not found at address ${tokenAddress}. Make sure your wallet is connected to Push Chain (chainId: ${chainInfo.chainId}).`);
+                    console.warn(`[x402] Token contract code check returned empty for ${tokenAddress}. This may be an RPC issue. Continuing anyway...`);
+                    debugLog(finalConfig, "Token contract code check returned empty", {
+                      tokenAddress,
+                      chainId: chainInfo.chainId,
+                      provider: provider.constructor.name,
+                      note: "Continuing with token transfer attempt"
+                    });
+                  } else {
+                    debugLog(finalConfig, "Token contract verified", { tokenAddress, codeLength: code.length });
                   }
                 } catch (codeError) {
-                  if (codeError.message?.includes("Token contract not found")) {
-                    throw new X402Error(
-                      codeError.message,
-                      "NETWORK_ERROR" /* NETWORK_ERROR */,
-                      { tokenAddress, chainId: chainInfo.chainId }
-                    );
-                  }
-                  console.warn("Could not verify token contract existence:", codeError.message);
+                  console.warn("[x402] Could not verify token contract existence:", codeError.message);
                 }
                 const tokenAbi = ["function approve(address spender, uint256 amount) external returns (bool)"];
                 const tokenContract = new ethersForWallet.Contract(tokenAddress, tokenAbi, walletSigner);
@@ -831,30 +820,17 @@ function createX402Client(config = {}) {
                 let currentAllowance = BigInt(0);
                 try {
                   currentAllowance = await allowanceContract.allowance(await walletSigner.getAddress(), facilitatorContractAddress);
+                  debugLog(finalConfig, "Token allowance check passed", { currentAllowance: currentAllowance.toString() });
                 } catch (allowanceError) {
                   const errorMsg = allowanceError.message || String(allowanceError);
-                  const errorCode = allowanceError.code || allowanceError.error?.code;
-                  const isDecodeError = errorMsg.includes("could not decode") || errorMsg.includes('value="0x"') || errorMsg.includes("BAD_DATA") || errorCode === "BAD_DATA" || errorCode === "CALL_EXCEPTION" || allowanceError.info?.method === "allowance" && (errorMsg.includes("0x") || errorMsg.includes("decode")) || allowanceError.info?.signature === "allowance(address,address)" && errorCode === "BAD_DATA";
-                  if (isDecodeError) {
-                    const errorMessage = `Token contract not found or invalid. Token address ${tokenAddress} may not exist on the current chain. Make sure your wallet is connected to Push Chain (chainId: ${chainInfo.chainId}).`;
-                    if (onPaymentStatus) {
-                      onPaymentStatus(`Error: ${errorMessage}`);
-                    }
-                    throw new X402Error(
-                      errorMessage,
-                      "NETWORK_ERROR" /* NETWORK_ERROR */,
-                      {
-                        tokenAddress,
-                        chainId: chainInfo.chainId,
-                        walletChainId: currentWalletChain,
-                        originalError: errorMsg,
-                        errorCode
-                      }
-                    );
-                  }
-                  console.warn("Could not check token allowance, will attempt approval:", errorMsg);
+                  console.warn("[x402] Allowance check failed, will attempt approval anyway:", errorMsg);
+                  debugLog(finalConfig, "Allowance check failed, continuing", {
+                    errorMsg,
+                    errorCode: allowanceError.code,
+                    tokenAddress
+                  });
                   if (onPaymentStatus) {
-                    onPaymentStatus("Allowance check failed, attempting approval...");
+                    onPaymentStatus("Allowance check skipped, attempting direct approval...");
                   }
                   currentAllowance = BigInt(0);
                 }
@@ -869,16 +845,31 @@ function createX402Client(config = {}) {
                       onPaymentStatus("Token approval confirmed, proceeding with transfer...");
                     }
                   } catch (approveError) {
-                    const isDecodeError = approveError.message?.includes("could not decode") || approveError.code === "BAD_DATA" || approveError.message?.includes('value="0x"');
-                    if (isDecodeError) {
-                      const errorMsg = `Token contract not found. Make sure your wallet is connected to Push Chain (chainId: ${chainInfo.chainId}). Token address ${tokenAddress} is on Push Chain.`;
+                    const errorMsg = approveError.message || String(approveError);
+                    const errorCode = approveError.code;
+                    if (errorMsg.includes("user rejected") || errorCode === "ACTION_REJECTED" || errorCode === 4001) {
+                      throw new X402Error(
+                        "Token approval was rejected by user",
+                        "PAYMENT_FAILED" /* PAYMENT_FAILED */,
+                        { tokenAddress, userRejected: true }
+                      );
+                    }
+                    const isContractError = errorMsg.includes("could not decode") || errorMsg.includes('value="0x"') || errorCode === "BAD_DATA" || errorCode === "CALL_EXCEPTION";
+                    if (isContractError) {
+                      console.error("[x402] Token approve failed:", {
+                        tokenAddress,
+                        errorMsg,
+                        errorCode,
+                        chainId: chainInfo.chainId
+                      });
+                      const friendlyMsg = `Token approval failed. The token contract at ${tokenAddress} may not support approvals or there's an RPC issue. Please try again or use a different token. (Chain: ${chainInfo.chainId})`;
                       if (onPaymentStatus) {
-                        onPaymentStatus(`Error: ${errorMsg}`);
+                        onPaymentStatus(`Error: ${friendlyMsg}`);
                       }
                       throw new X402Error(
-                        errorMsg,
-                        "NETWORK_ERROR" /* NETWORK_ERROR */,
-                        { tokenAddress, chainId: chainInfo.chainId, walletChainId }
+                        friendlyMsg,
+                        "TRANSACTION_FAILED" /* TRANSACTION_FAILED */,
+                        { tokenAddress, chainId: chainInfo.chainId, walletChainId, originalError: errorMsg }
                       );
                     }
                     throw approveError;
@@ -970,15 +961,37 @@ function createX402Client(config = {}) {
                   }
                 );
               }
-              const isDecodeError = errorMsg.includes("could not decode") || errorMsg.includes('value="0x"') || errorMsg.includes("BAD_DATA") || errorCode === "BAD_DATA" || errorCode === "CALL_EXCEPTION" || walletError.info?.method === "allowance" && (errorMsg.includes("0x") || errorMsg.includes("decode")) || walletError.info?.signature === "allowance(address,address)" && errorCode === "BAD_DATA";
-              if (isDecodeError && isTokenTransfer) {
-                const errorMessage = `Token contract not found. Make sure your wallet is connected to Push Chain (chainId: ${chainInfo.chainId}). Token address ${tokenAddress} is on Push Chain.`;
+              const isUserRejection = errorMsg.includes("user rejected") || errorCode === "ACTION_REJECTED" || errorCode === 4001;
+              if (isUserRejection) {
+                throw new X402Error(
+                  "Transaction was rejected by user",
+                  "PAYMENT_FAILED" /* PAYMENT_FAILED */,
+                  { userRejected: true }
+                );
+              }
+              const isInsufficientFunds = errorMsg.includes("insufficient funds") || errorMsg.includes("exceeds balance") || errorMsg.includes("INSUFFICIENT_FUNDS");
+              if (isInsufficientFunds) {
+                throw new X402Error(
+                  `Insufficient funds for ${isTokenTransfer ? "token" : "native"} transfer. Please ensure you have enough balance.`,
+                  "INSUFFICIENT_FUNDS" /* INSUFFICIENT_FUNDS */,
+                  { isTokenTransfer, tokenAddress }
+                );
+              }
+              const isCallError = errorCode === "CALL_EXCEPTION" || errorCode === "BAD_DATA" || errorMsg.includes("could not decode") || errorMsg.includes("execution reverted");
+              if (isCallError && isTokenTransfer) {
+                const errorMessage = `Token transfer failed. This could be due to: insufficient token balance, missing approval, or contract issue. Token: ${tokenAddress}. Try approving more tokens or check your balance.`;
+                console.error("[x402] Token transfer call failed:", {
+                  errorMsg,
+                  errorCode,
+                  tokenAddress,
+                  facilitatorAddress
+                });
                 if (onPaymentStatus) {
                   onPaymentStatus(`Error: ${errorMessage}`);
                 }
                 throw new X402Error(
                   errorMessage,
-                  "NETWORK_ERROR" /* NETWORK_ERROR */,
+                  "TRANSACTION_FAILED" /* TRANSACTION_FAILED */,
                   {
                     tokenAddress,
                     chainId: chainInfo.chainId,

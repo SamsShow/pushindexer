@@ -25,12 +25,23 @@ export default function Layout({ children }: LayoutProps) {
                         <span className="font-bold text-xl text-gray-900">Push x402</span>
                     </div>
                     
-                    <div className="hidden md:flex items-center gap-8 text-sm">
+                    <div className="hidden md:flex items-center gap-6 text-sm">
                         <a href="#features" className="text-gray-600 hover:text-gray-900 transition-colors font-medium">Features</a>
                         <a href="#why-push" className="text-gray-600 hover:text-gray-900 transition-colors font-medium">Why Push Chain</a>
                         <a href="#sdk" className="text-gray-600 hover:text-gray-900 transition-colors font-medium">SDK</a>
-                        <a href="https://www.npmjs.com/package/push-x402" target="_blank" rel="noopener noreferrer" className="text-gray-600 hover:text-gray-900 transition-colors font-medium">Docs</a>
+                        <a href="/docs" className="text-gray-600 hover:text-gray-900 transition-colors font-medium">Docs</a>
                         <a href="https://github.com/SamsShow/pushindexer" target="_blank" rel="noopener noreferrer" className="text-gray-600 hover:text-gray-900 transition-colors font-medium">GitHub</a>
+                        <a 
+                            href="https://www.npmjs.com/package/push-x402" 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-[#CB3837] hover:bg-[#b32f2f] text-white rounded-lg transition-colors font-medium"
+                        >
+                            <svg className="w-4 h-4" viewBox="0 0 576 512" fill="currentColor">
+                                <path d="M288 288h-32v-64h32v64zm288-128v192H288v32H160v-32H0V160h576zm-416 32H32v128h64v-96h32v96h32V192zm160 0H192v160h64v-32h64V192zm224 0H352v128h64v-96h32v96h32v-96h32v96h32V192z"/>
+                            </svg>
+                            npm
+                        </a>
                     </div>
                 </div>
             </nav>

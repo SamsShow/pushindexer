@@ -76,8 +76,15 @@ export default function Demo() {
     return chainMap[chainId] || `Chain ${chainId}`;
   };
 
+  // Chains supported by @pushchain/core for Universal Signer creation
+  // These are the only chains that can use Universal Transaction
+  const UNIVERSAL_TX_SUPPORTED_CHAINS = ['1', '11155111']; // Ethereum Mainnet, Ethereum Sepolia
+
   // Check if wallet is on Push Chain
   const isOnPushChain = currentWalletChain === '42101';
+  
+  // Check if wallet is on a chain that supports Universal Transaction
+  const isOnUniversalTxSupportedChain = currentWalletChain ? UNIVERSAL_TX_SUPPORTED_CHAINS.includes(currentWalletChain) : false;
 
   // Set mounted state after hydration to avoid SSR mismatch
   useEffect(() => {
@@ -135,6 +142,12 @@ export default function Demo() {
       let client;
       let configMethod: 'standard' | 'builder' | 'preset' = 'standard';
       
+      // If browser wallet is requested but ethers isn't loaded yet, wait
+      if (useBrowserWallet && isMounted && hasEthereum && !ethersAvailable) {
+        console.log('[demo] Waiting for ethers to load...');
+        return; // Don't initialize yet, wait for ethers
+      }
+      
       if (useBrowserWallet && isMounted && hasEthereum && ethersAvailable) {
         // Use browser wallet provider
         try {
@@ -154,6 +167,7 @@ export default function Demo() {
           // If Universal Transaction is enabled, add pushNetwork for cross-chain support
           if (useUniversalTx) {
             walletConfig.pushNetwork = pushNetwork;
+            console.log('[demo] Universal Transaction enabled with browser wallet');
           }
           
           if (useBuilderPattern) {
@@ -182,13 +196,24 @@ export default function Demo() {
             client = createX402Client(walletConfig);
           }
           setWalletConnected(true);
+          console.log('[demo] Browser wallet client initialized', { useUniversalTx, pushNetwork });
         } catch (error) {
           console.error('Failed to connect wallet:', error);
           setWalletConnected(false);
-          // Fallback to payment endpoint
-          const paymentEndpoint = useUniversalTx 
-            ? '/api/payment/process-universal' 
-            : '/api/payment/process';
+          
+          // DON'T fall back to server when Universal Tx is enabled - let it fail properly
+          if (useUniversalTx) {
+            console.error('[demo] Universal Tx requires browser wallet - not falling back to server');
+            // Create a minimal client that will show proper error
+            client = createX402Client({
+              debug: debugMode,
+              onPaymentStatus: (status: string) => {
+                setPaymentStatus(status);
+              },
+            });
+          } else {
+            // Fallback to payment endpoint only for non-Universal Tx
+            const paymentEndpoint = '/api/payment/process';
           
           if (useBuilderPattern) {
             configMethod = 'builder';
@@ -218,8 +243,9 @@ export default function Demo() {
             });
           }
         }
-      } else {
-        // Use payment endpoint (server-side processing)
+        }
+      } else if (!useBrowserWallet) {
+        // Use payment endpoint (server-side processing) - only when browser wallet is NOT enabled
         const paymentEndpoint = useUniversalTx 
           ? '/api/payment/process-universal' 
           : '/api/payment/process';
@@ -235,7 +261,7 @@ export default function Demo() {
         } else if (useNetworkPreset) {
           configMethod = 'preset';
           client = createX402Client({
-            network: 'push-testnet', // New: Network preset!
+            network: 'push-testnet',
             paymentEndpoint,
             debug: debugMode,
             onPaymentStatus: (status: string) => {
@@ -252,10 +278,11 @@ export default function Demo() {
           });
         }
         setWalletConnected(false);
+        console.log('[demo] Server-side client initialized', { useUniversalTx });
       }
 
       // Store client and config method for use in button click
-      if (isMounted) {
+      if (isMounted && client) {
         (window as any).x402Client = client;
         (window as any).x402ConfigMethod = configMethod;
       }
@@ -409,6 +436,58 @@ export default function Demo() {
   const handleStartOver = () => {
     setPaymentState({ status: 'idle' });
     setPaymentStatus('');
+  };
+
+  const handleSwitchToEthereumSepolia = async () => {
+    if (!isMounted || !hasEthereum || !(window as any).ethereum) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      const ethereum = (window as any).ethereum;
+      const chainId = '0xaa36a7'; // 11155111 in hex
+      const chainParams = {
+        chainId: chainId,
+        chainName: 'Ethereum Sepolia',
+        nativeCurrency: {
+          name: 'Sepolia ETH',
+          symbol: 'ETH',
+          decimals: 18,
+        },
+        rpcUrls: ['https://rpc.sepolia.org'],
+        blockExplorerUrls: ['https://sepolia.etherscan.io'],
+      };
+
+      try {
+        await ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId }],
+        });
+        setPaymentStatus('Switched to Ethereum Sepolia! Universal Transaction now available.');
+        setTimeout(() => {
+          setPaymentState({ status: 'idle' });
+          setPaymentStatus('');
+        }, 2000);
+      } catch (switchError: any) {
+        if (switchError.code === 4902 || switchError.code === -32603) {
+          await ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [chainParams],
+          });
+          setPaymentStatus('Added and switched to Ethereum Sepolia!');
+          setTimeout(() => {
+            setPaymentState({ status: 'idle' });
+            setPaymentStatus('');
+          }, 2000);
+        } else {
+          throw switchError;
+        }
+      }
+    } catch (error: any) {
+      console.error('Error switching to Ethereum Sepolia:', error);
+      alert(`Failed to switch chain: ${error.message}`);
+    }
   };
 
   const handleSwitchToPushChain = async () => {
@@ -685,16 +764,69 @@ export default function Demo() {
               {useBrowserWallet && walletConnected && (
                 <div style={{ 
                   padding: '12px', 
-                  background: '#dbeafe', 
-                  border: '1px solid #93c5fd', 
+                  background: currentWalletChain && !isOnPushChain && !isOnUniversalTxSupportedChain ? '#fef2f2' : 
+                             currentWalletChain && !isOnPushChain && !useUniversalTx ? '#fef3c7' : '#dbeafe', 
+                  border: `1px solid ${currentWalletChain && !isOnPushChain && !isOnUniversalTxSupportedChain ? '#fecaca' : 
+                                       currentWalletChain && !isOnPushChain && !useUniversalTx ? '#fcd34d' : '#93c5fd'}`, 
                   borderRadius: '6px',
                   marginBottom: '16px',
                   fontSize: '14px',
-                  color: '#1e40af'
+                  color: currentWalletChain && !isOnPushChain && !isOnUniversalTxSupportedChain ? '#991b1b' : 
+                         currentWalletChain && !isOnPushChain && !useUniversalTx ? '#92400e' : '#1e40af'
                 }}>
                   ✓ Browser wallet connected on <strong>{getChainName(currentWalletChain)}</strong>
-                  {currentWalletChain && !isOnPushChain && (
-                    <span style={{ color: '#047857' }}> — Cross-chain payments supported via Universal Transaction</span>
+                  {currentWalletChain && !isOnPushChain && isOnUniversalTxSupportedChain && useUniversalTx && (
+                    <div style={{ marginTop: '8px' }}>
+                      <span style={{ color: '#047857' }}>✓ Cross-chain payments enabled via Universal Transaction</span>
+                      <div style={{ fontSize: '12px', color: '#047857', marginTop: '4px' }}>
+                        Supports both native ETH and ERC-20 tokens (USDC, USDT, etc.)
+                      </div>
+                    </div>
+                  )}
+                  {currentWalletChain && !isOnPushChain && !isOnUniversalTxSupportedChain && (
+                    <div style={{ marginTop: '8px', fontSize: '12px' }}>
+                      ⚠️ <strong>{getChainName(currentWalletChain)} is NOT supported</strong> for Universal Transaction yet.
+                      <br />
+                      <span style={{ fontSize: '11px', opacity: 0.8 }}>
+                        Supported: Ethereum Mainnet, Ethereum Sepolia, Push Chain
+                      </span>
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                        <button
+                          onClick={handleSwitchToEthereumSepolia}
+                          style={{
+                            padding: '6px 12px',
+                            background: '#6366f1',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Switch to Ethereum Sepolia
+                        </button>
+                        <button
+                          onClick={handleSwitchToPushChain}
+                          style={{
+                            padding: '6px 12px',
+                            background: '#ec4899',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Switch to Push Chain
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {currentWalletChain && !isOnPushChain && isOnUniversalTxSupportedChain && !useUniversalTx && (
+                    <div style={{ marginTop: '8px', fontSize: '12px' }}>
+                      ⚠️ <strong>Enable &quot;Use Universal Transaction&quot; below</strong> to pay from {getChainName(currentWalletChain)}. 
+                      Your assets will be automatically bridged to Push Chain.
+                    </div>
                   )}
                 </div>
               )}
@@ -800,8 +932,9 @@ export default function Demo() {
                     checked={useBrowserWallet}
                     onChange={(e) => {
                       setUseBrowserWallet(e.target.checked);
-                      if (e.target.checked) {
-                        setUseUniversalTx(false);
+                      // Auto-enable Universal Tx if wallet is on external chain
+                      if (e.target.checked && currentWalletChain && currentWalletChain !== '42101') {
+                        setUseUniversalTx(true);
                       }
                     }}
                     disabled={!isMounted || !hasEthereum}
@@ -856,26 +989,30 @@ export default function Demo() {
                     checked={useUniversalTx}
                     onChange={(e) => {
                       setUseUniversalTx(e.target.checked);
-                      if (e.target.checked) {
-                        setUseBrowserWallet(false);
+                      // If enabling Universal Tx and browser wallet isn't on, enable it too
+                      if (e.target.checked && !useBrowserWallet && isMounted && hasEthereum) {
+                        setUseBrowserWallet(true);
                       }
                     }}
-                    disabled={useBrowserWallet}
                     style={{ 
                       width: '18px', 
                       height: '18px',
-                      cursor: useBrowserWallet ? 'not-allowed' : 'pointer',
-                      opacity: useBrowserWallet ? 0.5 : 1
+                      cursor: 'pointer'
                     }}
                   />
                   <div>
                     <strong>Use Universal Transaction</strong>
                     <div style={{ fontSize: '12px', marginTop: '4px', opacity: 0.8 }}>
-                      Pay from ANY chain (Sepolia, Base, Arbitrum, Solana) — assets bridged automatically to Push Chain
+                      Pay from Ethereum Mainnet or Sepolia — assets bridged automatically to Push Chain
                     </div>
-                    {currentWalletChain && !isOnPushChain && (
+                    {currentWalletChain && !isOnPushChain && isOnUniversalTxSupportedChain && (
                       <div style={{ fontSize: '11px', marginTop: '4px', color: '#059669' }}>
-                        ✓ Recommended: Your wallet is on {getChainName(currentWalletChain)}
+                        ✓ Your wallet is on {getChainName(currentWalletChain)} — Universal Tx supported!
+                      </div>
+                    )}
+                    {currentWalletChain && !isOnPushChain && !isOnUniversalTxSupportedChain && (
+                      <div style={{ fontSize: '11px', marginTop: '4px', color: '#dc2626' }}>
+                        ⚠️ {getChainName(currentWalletChain)} not supported — switch to Ethereum Sepolia or Push Chain
                       </div>
                     )}
                   </div>
@@ -890,12 +1027,11 @@ export default function Demo() {
                       fontSize: '12px',
                       color: '#1e40af'
                     }}>
-                      🚀 <strong>Universal Transaction</strong> enabled. Uses proper Push Chain flow:
-                      <ol style={{ margin: '8px 0 0 16px', padding: 0, fontSize: '11px' }}>
-                        <li>Convert signer → Universal Signer</li>
-                        <li>Initialize Push Chain Client</li>
-                        <li>Send via <code>pushChainClient.universal.sendTransaction()</code></li>
-                      </ol>
+                      🚀 <strong>Universal Transaction</strong> enabled!
+                      <div style={{ marginTop: '4px', fontSize: '11px' }}>
+                        Bridges funds directly from your chain to recipient on Push Chain.
+                        Supports <strong>both native ETH and ERC-20 tokens</strong> (USDC, USDT).
+                      </div>
                     </div>
                     <div style={{ marginTop: '12px' }}>
                       <label style={{ 
