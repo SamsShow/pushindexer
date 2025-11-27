@@ -1,8 +1,18 @@
 # push-x402
 
-**Drop-in axios replacement that automatically handles HTTP 402 Payment Required responses with blockchain payments.**
+**Drop-in axios replacement that automatically handles HTTP 402 Payment Required responses with blockchain payments on Push Chain.**
+
+✨ **v0.3.2** - Now with Universal Transaction support for cross-chain payments!
 
 Just use it like axios - it automatically handles payments when you hit a protected endpoint!
+
+## Features
+
+- 🔌 **Plug & Play** - Drop-in replacement for axios
+- 🌐 **Multi-Chain** - Pay from Ethereum, Base, Arbitrum, Solana via Universal Transaction
+- 🔐 **Secure** - Built on Push Chain with on-chain verification
+- 🤖 **Agent-Ready** - Perfect for AI agents with autonomous payments
+- ⚡ **Auto-Detection** - SDK detects your wallet chain and routes appropriately
 
 ## Installation
 
@@ -13,7 +23,7 @@ npm install push-x402 axios
 # If using wallet provider (browser/client-side), also install ethers
 npm install push-x402 axios ethers
 
-# For multi-chain support with Universal Signer, also install Push Chain SDK
+# For multi-chain support with Universal Transaction, also install Push Chain SDK
 npm install push-x402 axios ethers @pushchain/core
 ```
 
@@ -478,8 +488,21 @@ The SDK uses these defaults:
 
 - **Facilitator Address**: `0x30C833dB38be25869B20FdA61f2ED97196Ad4aC7` (Push Chain facilitator contract)
 - **Chain ID**: `42101` (Push Chain testnet)
+- **Push Chain RPC**: `https://evm.donut.rpc.push.org/`
 - **Payment Endpoint**: None (SDK calls facilitator contract directly)
 - **Base URL**: Auto-detected in browser (`window.location.origin`)
+
+### Push Chain Network Configuration
+
+Add Push Chain to your wallet for the best experience:
+
+| Setting | Value |
+|---------|-------|
+| Network Name | Push Chain Testnet |
+| RPC URL | `https://evm.donut.rpc.push.org/` |
+| Chain ID | `42101` |
+| Currency Symbol | `PC` |
+| Block Explorer | `https://explorer.push.org/` |
 
 **Note:** You must provide one of: `walletProvider`, `privateKey`, `universalSigner`, or `paymentEndpoint` for payments to work.
 
@@ -622,95 +645,81 @@ const client = createX402Client({
 });
 ```
 
-### Multi-Chain Support with Universal Signer
+### Multi-Chain Support with Universal Transaction
 
-The SDK now supports **automatic multi-chain transactions** using Push Chain's Universal Signer! This enables seamless payments across all Push Chain supported networks without code changes.
+The SDK now supports **Universal Transaction** - pay from any chain without bridging or wrapping tokens!
 
-#### Automatic Chain Detection
+#### How It Works
 
-The SDK automatically detects the target chain from payment requirements:
+The SDK automatically detects your wallet's chain and routes payments appropriately:
+
+| Wallet Chain | Payment Method |
+|--------------|----------------|
+| Push Chain (42101) | Direct contract call (fastest) |
+| Ethereum Sepolia | Universal Tx with auto-bridging |
+| Base Sepolia | Universal Tx with auto-bridging |
+| Arbitrum Sepolia | Universal Tx with auto-bridging |
+| BNB Testnet | Universal Tx with auto-bridging |
+| Solana Devnet | Universal Tx with auto-bridging |
 
 ```typescript
-// Server returns 402 with chain information
-{
-  "amount": "0.001",
-  "recipient": "0x...",
-  "chainId": 1,  // Ethereum mainnet
-  "rpcUrl": "https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"  // Optional
+// The SDK handles this automatically:
+if (walletChainId === 42101) {
+  // Already on Push Chain - direct contract call
+  await facilitatorContract.facilitateNativeTransfer(recipient, { value: amount });
+} else {
+  // External chain - Universal Transaction with funds field
+  await pushChainClient.universal.sendTransaction({
+    to: facilitatorAddress,
+    data: encodedCall,
+    funds: { token: 'pETH.base', amount: paymentAmount },
+  });
 }
 ```
 
-The SDK will automatically:
-1. Detect chain from `chainId` or `rpcUrl` in payment requirements
-2. Use Universal Signer if available (enables cross-chain)
-3. Fallback to ethers.js for backward compatibility
-
-#### Using Universal Signer
-
-**Option 1: Provide Universal Signer directly**
+#### Enable Universal Transaction
 
 ```typescript
-import { PushChain } from '@pushchain/core';
-import { ethers } from 'ethers';
 import { createX402Client } from 'push-x402';
 
-// Create Universal Signer from ethers signer
-const provider = new ethers.JsonRpcProvider('https://evm.rpc-testnet-donut-node1.push.org/');
-const ethersSigner = new ethers.Wallet('YOUR_PRIVATE_KEY', provider);
-const universalSigner = await PushChain.utils.signer.toUniversal(ethersSigner);
-
-// Use Universal Signer in SDK
 const client = createX402Client({
-  universalSigner,
-  baseURL: 'https://api.example.com',
+  walletProvider: window.ethereum,
+  pushNetwork: 'testnet',  // Enables Universal Transaction
 });
 
-// Payments will work across all Push Chain supported networks!
-const response = await client.get('/protected/resource');
+// SDK auto-detects your wallet chain:
+// - On Push Chain? → Direct contract call
+// - On Sepolia/Base/etc? → Universal Tx with bridging
+const response = await client.get('/api/premium/data');
 ```
 
-**Option 2: Auto-create from wallet provider**
+#### Supported Chains & Gateways
 
-```typescript
-import { ethers } from 'ethers';
-import { createX402Client } from 'push-x402';
+| Chain | Chain ID | Gateway Address |
+|-------|----------|-----------------|
+| Ethereum Sepolia | 11155111 | 0x05bD7a3D18324c1F7e216f7fBF2b15985aE5281A |
+| Base Sepolia | 84532 | 0xFD4fef1F43aFEc8b5bcdEEc47f35a1431479aC16 |
+| Arbitrum Sepolia | 421614 | 0x2cd870e0166Ba458dEC615168Fd659AacD795f34 |
+| BNB Testnet | 97 | 0x44aFFC61983F4348DdddB886349eb992C061EaC0 |
 
-const provider = new ethers.BrowserProvider(window.ethereum);
-const client = createX402Client({
-  walletProvider: provider,
-  // SDK will automatically create Universal Signer if @pushchain/core is installed
-  baseURL: 'https://api.example.com',
-});
+#### PRC-20 Tokens on Push Chain
 
-// Multi-chain payments work automatically!
-const response = await client.get('/protected/resource');
-```
+When paying from external chains, your tokens are bridged as PRC-20 tokens:
 
-**Option 3: Configure chain RPC mapping**
+**From Ethereum Sepolia:**
+- pETH: `0x2971824Db68229D087931155C2b8bB820B275809`
+- WETH.eth: `0x0d0dF7E8807430A81104EA84d926139816eC7586`
+- USDC.eth: `0x387b9C8Db60E74999aAAC5A2b7825b400F12d68E`
+- USDT.eth: `0xCA0C5E6F002A389E1580F0DB7cd06e4549B5F9d3`
 
-```typescript
-const client = createX402Client({
-  walletProvider: provider,
-  chainRpcMap: {
-    '42101': 'https://evm.rpc-testnet-donut-node1.push.org/',  // Push Chain testnet
-    '1': 'https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY',       // Ethereum
-    '137': 'https://polygon-rpc.com',                           // Polygon
-  },
-  baseURL: 'https://api.example.com',
-});
+**From Base Sepolia:**
+- pETH.base: `0xc7007af2B24D4eb963fc9633B0c66e1d2D90Fc21`
+- USDC.base: `0x84B62e44F667F692F7739Ca6040cD17DA02068A8`
+- USDT.base: `0x2C455189D2af6643B924A981a9080CcC63d5a567`
 
-// SDK automatically selects the correct RPC based on payment requirements
-```
-
-#### Chain Detection Priority
-
-The SDK detects chains in this order:
-1. `rpcUrl` from payment requirements (highest priority)
-2. `chainId` from payment requirements + `chainRpcMap` config
-3. `pushChainRpcUrl` config option
-4. `chainId` from payment requirements (uses default Push Chain RPC)
-5. `chainId` config option
-6. Default: Push Chain testnet (42101)
+**From Solana Devnet:**
+- pSOL: `0x5D525Df2bD99a6e7ec58b76aF2fd95F39874EBed`
+- USDC.sol: `0x04B8F634ABC7C879763F623e0f0550a4b5c4426F`
 
 ### Payment Options: Choose What Works for You
 
@@ -904,6 +913,19 @@ const client = createX402Client({
 - Check network connectivity and RPC endpoint
 - Ensure facilitator contract address is correct
 - Enable debug mode to see detailed error information
+
+### Universal Transaction Issues
+
+- **Not on Push Chain?** That's fine! The SDK auto-bridges from your chain
+- **Install @pushchain/core** for Universal Transaction: `npm install @pushchain/core`
+- **Token not available?** Check that your source chain token is supported
+- **Transaction pending?** Cross-chain transactions may take longer due to bridging
+
+### Chain Detection Problems
+
+- The SDK auto-detects your wallet's chain using `ethereum.request({ method: 'eth_chainId' })`
+- If detection fails, you may need to refresh or reconnect your wallet
+- For Push Chain direct payments, ensure your wallet is on chain ID 42101
 
 ### 402 Response Not Handled
 

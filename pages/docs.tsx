@@ -93,7 +93,7 @@ export default function DocsPage() {
                   <span className="font-bold text-xl text-gray-900">Push x402</span>
                 </Link>
                 <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-semibold rounded-full">
-                  v0.3.0
+                  v0.3.2
                 </span>
               </div>
               
@@ -629,20 +629,31 @@ const data = await agent.queryPaidAPI('/api/premium/inference');`}
                   </Callout>
 
                   <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">How It Works</h2>
-                  <div className="flex flex-wrap items-center justify-center gap-4 p-6 bg-white rounded-2xl border border-gray-200 mb-8">
-                    {[
-                      { title: 'Your Chain', desc: 'ETH, Base, Arbitrum, etc.' },
-                      { title: 'Universal Tx', desc: 'Auto bridging' },
-                      { title: 'Push Chain', desc: 'Payment processed' },
-                    ].map((step, i) => (
-                      <div key={i} className="flex items-center gap-4">
-                        <div className="text-center px-4 py-3 bg-purple-50 rounded-xl border border-purple-200">
-                          <div className="font-medium text-gray-900">{step.title}</div>
-                          <div className="text-xs text-gray-500">{step.desc}</div>
-                        </div>
-                        {i < 2 && <span className="text-purple-400 text-xl">→</span>}
+                  <p className="text-gray-600 mb-4">
+                    The SDK automatically detects your wallet&apos;s connected chain and routes payments appropriately:
+                  </p>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <div className="p-5 bg-white rounded-2xl border border-green-200">
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="text-2xl">🟢</span>
+                        <h3 className="font-semibold text-gray-900">On Push Chain (42101)</h3>
                       </div>
-                    ))}
+                      <p className="text-sm text-gray-600 mb-3">Direct contract call - fastest and cheapest</p>
+                      <div className="text-xs font-mono bg-gray-50 p-3 rounded-lg">
+                        Wallet → Facilitator Contract → Done
+                      </div>
+                    </div>
+                    <div className="p-5 bg-white rounded-2xl border border-purple-200">
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="text-2xl">🌐</span>
+                        <h3 className="font-semibold text-gray-900">On External Chain</h3>
+                      </div>
+                      <p className="text-sm text-gray-600 mb-3">Universal Tx with auto-bridging via <code className="text-purple-600">funds</code> field</p>
+                      <div className="text-xs font-mono bg-gray-50 p-3 rounded-lg">
+                        Your Chain → Gateway → Push Chain → Done
+                      </div>
+                    </div>
                   </div>
 
                   <h2 className="text-2xl font-bold text-gray-900 mb-4">Enable Universal Transaction</h2>
@@ -654,9 +665,31 @@ const client = createX402Client({
   pushNetwork: 'testnet',  // Enables Universal Tx
 });
 
-// Now payments work from any connected chain!
-// User can be on Ethereum Sepolia, Base Sepolia, etc.
+// SDK auto-detects your wallet chain:
+// - On Push Chain? → Direct contract call
+// - On Sepolia/Base/etc? → Universal Tx with bridging
+
 const response = await client.get('/api/premium/data');`}
+                  />
+
+                  <h2 className="text-2xl font-bold text-gray-900 mt-10 mb-4">Payment Flow by Chain</h2>
+                  <CodeBlock 
+                    code={`// The SDK handles this automatically:
+
+if (walletChainId === 42101) {
+  // Already on Push Chain - direct call
+  await facilitatorContract.facilitateNativeTransfer(recipient, { value: amount });
+} else {
+  // External chain - use Universal Transaction
+  await pushChainClient.universal.sendTransaction({
+    to: facilitatorAddress,
+    data: encodedCall,
+    funds: {
+      token: 'pETH.base',  // Mapped from your source chain
+      amount: paymentAmount,
+    },
+  });
+}`}
                   />
 
                   <h2 className="text-2xl font-bold text-gray-900 mt-10 mb-4">Supported Source Chains</h2>
@@ -666,19 +699,29 @@ const response = await client.get('/api/premium/data');`}
                         <tr className="bg-gray-50 border-b border-gray-200">
                           <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Chain</th>
                           <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Chain ID</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Gateway</th>
                           <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Status</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                        <tr><td className="px-4 py-3 text-sm">Push Chain Testnet</td><td className="px-4 py-3 text-sm font-mono">42101</td><td className="px-4 py-3 text-sm text-green-600">✅ Direct</td></tr>
-                        <tr><td className="px-4 py-3 text-sm">Ethereum Sepolia</td><td className="px-4 py-3 text-sm font-mono">11155111</td><td className="px-4 py-3 text-sm text-purple-600">✅ Via Universal Tx</td></tr>
-                        <tr><td className="px-4 py-3 text-sm">Base Sepolia</td><td className="px-4 py-3 text-sm font-mono">84532</td><td className="px-4 py-3 text-sm text-purple-600">✅ Via Universal Tx</td></tr>
-                        <tr><td className="px-4 py-3 text-sm">Arbitrum Sepolia</td><td className="px-4 py-3 text-sm font-mono">421614</td><td className="px-4 py-3 text-sm text-purple-600">✅ Via Universal Tx</td></tr>
-                        <tr><td className="px-4 py-3 text-sm">BNB Testnet</td><td className="px-4 py-3 text-sm font-mono">97</td><td className="px-4 py-3 text-sm text-purple-600">✅ Via Universal Tx</td></tr>
-                        <tr><td className="px-4 py-3 text-sm">Solana Devnet</td><td className="px-4 py-3 text-sm font-mono">-</td><td className="px-4 py-3 text-sm text-purple-600">✅ Via Universal Tx</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">Push Chain Testnet</td><td className="px-4 py-3 text-sm font-mono">42101</td><td className="px-4 py-3 text-sm text-gray-400">N/A</td><td className="px-4 py-3 text-sm text-green-600">✅ Direct</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">Ethereum Sepolia</td><td className="px-4 py-3 text-sm font-mono">11155111</td><td className="px-4 py-3 text-sm font-mono text-xs">0x05bD...81A</td><td className="px-4 py-3 text-sm text-purple-600">✅ Universal Tx</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">Base Sepolia</td><td className="px-4 py-3 text-sm font-mono">84532</td><td className="px-4 py-3 text-sm font-mono text-xs">0xFD4f...C16</td><td className="px-4 py-3 text-sm text-purple-600">✅ Universal Tx</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">Arbitrum Sepolia</td><td className="px-4 py-3 text-sm font-mono">421614</td><td className="px-4 py-3 text-sm font-mono text-xs">0x2cd8...d34</td><td className="px-4 py-3 text-sm text-purple-600">✅ Universal Tx</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">BNB Testnet</td><td className="px-4 py-3 text-sm font-mono">97</td><td className="px-4 py-3 text-sm font-mono text-xs">0x44aF...aC0</td><td className="px-4 py-3 text-sm text-purple-600">✅ Universal Tx</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">Solana Devnet</td><td className="px-4 py-3 text-sm font-mono">—</td><td className="px-4 py-3 text-sm font-mono text-xs">CFVS...w2VS</td><td className="px-4 py-3 text-sm text-purple-600">✅ Universal Tx</td></tr>
                       </tbody>
                     </table>
                   </div>
+
+                  <Callout type="tip" title="Pro Tip">
+                    For the best experience on Push Chain, add the network to your wallet:
+                    <br /><br />
+                    <strong>Push Chain Testnet</strong><br />
+                    • RPC: <code className="text-xs">https://evm.donut.rpc.push.org</code><br />
+                    • Chain ID: <code className="text-xs">42101</code><br />
+                    • Symbol: <code className="text-xs">PC</code>
+                  </Callout>
                 </article>
               )}
 
@@ -687,7 +730,11 @@ const response = await client.get('/api/premium/data');`}
                   <h1 className="text-4xl font-bold text-gray-900 mb-4">Supported Tokens</h1>
                   <p className="text-xl text-gray-600 mb-8">PRC-20 tokens available for payments on Push Chain.</p>
 
-                  <h2 className="text-2xl font-bold text-gray-900 mb-4">Ethereum Sepolia Tokens</h2>
+                  <Callout type="info">
+                    These are bridged tokens from various chains. When paying from an external chain, your tokens are automatically bridged to Push Chain as PRC-20 tokens.
+                  </Callout>
+
+                  <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">Ethereum Sepolia Tokens</h2>
                   <div className="overflow-x-auto">
                     <table className="w-full border-collapse bg-white rounded-xl overflow-hidden border border-gray-200">
                       <thead>
@@ -698,11 +745,83 @@ const response = await client.get('/api/premium/data');`}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                        <tr><td className="px-4 py-3 text-sm">Wrapped ETH</td><td className="px-4 py-3 text-sm font-medium">pETH</td><td className="px-4 py-3 text-sm font-mono text-purple-600">0x2971...5809</td></tr>
-                        <tr><td className="px-4 py-3 text-sm">WETH</td><td className="px-4 py-3 text-sm font-medium">WETH.eth</td><td className="px-4 py-3 text-sm font-mono text-purple-600">0x0d0d...7586</td></tr>
-                        <tr><td className="px-4 py-3 text-sm">USDT</td><td className="px-4 py-3 text-sm font-medium">USDT.eth</td><td className="px-4 py-3 text-sm font-mono text-purple-600">0xCA0C...F9d3</td></tr>
-                        <tr><td className="px-4 py-3 text-sm">USDC</td><td className="px-4 py-3 text-sm font-medium">USDC.eth</td><td className="px-4 py-3 text-sm font-mono text-purple-600">0x387b...d68E</td></tr>
-                        <tr><td className="px-4 py-3 text-sm">stETH</td><td className="px-4 py-3 text-sm font-medium">stETH.eth</td><td className="px-4 py-3 text-sm font-mono text-purple-600">0xaf89...68E</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">Wrapped ETH</td><td className="px-4 py-3 text-sm font-medium">pETH</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0x2971824Db68229D087931155C2b8bB820B275809</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">WETH</td><td className="px-4 py-3 text-sm font-medium">WETH.eth</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0x0d0dF7E8807430A81104EA84d926139816eC7586</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">USDT</td><td className="px-4 py-3 text-sm font-medium">USDT.eth</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0xCA0C5E6F002A389E1580F0DB7cd06e4549B5F9d3</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">USDC</td><td className="px-4 py-3 text-sm font-medium">USDC.eth</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0x387b9C8Db60E74999aAAC5A2b7825b400F12d68E</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">stETH</td><td className="px-4 py-3 text-sm font-medium">stETH.eth</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0xaf89E805949c628ebde3262e91dc4ab9eA12668E</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">Base Sepolia Tokens</h2>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse bg-white rounded-xl overflow-hidden border border-gray-200">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200">
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Token</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Symbol</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Address on Push Chain</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        <tr><td className="px-4 py-3 text-sm">Wrapped ETH</td><td className="px-4 py-3 text-sm font-medium">pETH.base</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0xc7007af2B24D4eb963fc9633B0c66e1d2D90Fc21</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">USDT</td><td className="px-4 py-3 text-sm font-medium">USDT.base</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0x2C455189D2af6643B924A981a9080CcC63d5a567</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">USDC</td><td className="px-4 py-3 text-sm font-medium">USDC.base</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0x84B62e44F667F692F7739Ca6040cD17DA02068A8</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">Arbitrum Sepolia Tokens</h2>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse bg-white rounded-xl overflow-hidden border border-gray-200">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200">
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Token</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Symbol</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Address on Push Chain</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        <tr><td className="px-4 py-3 text-sm">Wrapped ETH</td><td className="px-4 py-3 text-sm font-medium">pETH.arb</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0xc0a821a1AfEd1322c5e15f1F4586C0B8cE65400e</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">USDC</td><td className="px-4 py-3 text-sm font-medium">USDC.arb</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0xa261A10e94aE4bA88EE8c5845CbE7266bD679DD6</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">USDT</td><td className="px-4 py-3 text-sm font-medium">USDT.arb</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0x76Ad08339dF606BeEDe06f90e3FaF82c5b2fb2E9</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">Solana Devnet Tokens</h2>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse bg-white rounded-xl overflow-hidden border border-gray-200">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200">
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Token</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Symbol</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Address on Push Chain</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        <tr><td className="px-4 py-3 text-sm">Wrapped SOL</td><td className="px-4 py-3 text-sm font-medium">pSOL</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0x5D525Df2bD99a6e7ec58b76aF2fd95F39874EBed</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">USDC</td><td className="px-4 py-3 text-sm font-medium">USDC.sol</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0x04B8F634ABC7C879763F623e0f0550a4b5c4426F</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">USDT</td><td className="px-4 py-3 text-sm font-medium">USDT.sol</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0x4f1A3D22d170a2F4Bddb37845a962322e24f4e34</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">DAI</td><td className="px-4 py-3 text-sm font-medium">DAI.sol</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0x5861f56A556c990358cc9cccd8B5baa3767982A8</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">BNB Testnet Tokens</h2>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse bg-white rounded-xl overflow-hidden border border-gray-200">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200">
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Token</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Symbol</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Address on Push Chain</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        <tr><td className="px-4 py-3 text-sm">Wrapped BNB</td><td className="px-4 py-3 text-sm font-medium">pBNB</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0x7a9082dA308f3fa005beA7dB0d203b3b86664E36</td></tr>
+                        <tr><td className="px-4 py-3 text-sm">USDT</td><td className="px-4 py-3 text-sm font-medium">USDT.bnb</td><td className="px-4 py-3 text-sm font-mono text-purple-600 text-xs">0x2f98B4235FD2BA0173a2B056D722879360B12E7b</td></tr>
                       </tbody>
                     </table>
                   </div>
@@ -716,15 +835,19 @@ app.get('/api/premium', (req, res) => {
     paymentRequirements: {
       recipient: '0xYourAddress',
       amount: '1.0',
-      token: '0x387b9C8Db60E74999aAAC5A2b7825b400F12d68E', // USDC.eth
+      token: '0x387b9C8Db60E74999aAAC5A2b7825b400F12d68E', // USDC.eth on Push Chain
+      chainId: 42101,
     },
   });
 });`}
                   />
 
                   <Callout type="tip">
-                    For best compatibility, use native PC token (no token address).
-                    Token payments require users to have the specific PRC-20 token on Push Chain.
+                    <strong>Native PC Token:</strong> For the simplest setup, use the native PC token (don&apos;t specify a token address).
+                    Users can pay with PC directly on Push Chain.
+                    <br /><br />
+                    <strong>PRC-20 Tokens:</strong> For stablecoin payments, specify a token address.
+                    When users pay from external chains, their tokens are automatically bridged.
                   </Callout>
                 </article>
               )}
